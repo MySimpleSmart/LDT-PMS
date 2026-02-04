@@ -1,0 +1,4 @@
+/* App-level layout: full viewport for Ant Design Layout */
+#root {
+  min-height: 100vh;
+}
