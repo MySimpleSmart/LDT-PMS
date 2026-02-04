@@ -1,4 +1,4 @@
-# ECHO PMS — Project Management System
+# ECHO PMS (LDT-PMS) — Project Management System
 
 Small project management app built with **React**, **Vite**, **Ant Design**, and **Google Firebase**.
 
