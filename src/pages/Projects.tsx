@@ -47,6 +47,9 @@ export default function Projects() {
   const [viewMode, setViewMode] = useState<'list' | 'grid'>('list')
   const [currentPage, setCurrentPage] = useState(1)
   const [pageSize, setPageSize] = useState(10)
+  const [kanbanVisibleCount, setKanbanVisibleCount] = useState<Record<string, number>>({})
+  const KANBAN_INITIAL_COUNT = 40
+  const KANBAN_LOAD_MORE = 20
   const myProjectIds = useMemo(
     () => (currentUserMemberId ? getRelatedProjectsForMember(currentUserMemberId).map((r) => r.key) : []),
     [currentUserMemberId]
@@ -92,8 +95,24 @@ export default function Projects() {
     })
   }, [baseProjects, searchText, statusFilter, dateRange, sortBy])
 
+  const projectKanbanColumns = useMemo(() => {
+    const order = statusOptions.map((o) => o.value)
+    const grouped: Record<string, ProjectRow[]> = {}
+    order.forEach((s) => { grouped[s] = [] })
+    filteredProjects.forEach((p) => {
+      const key = order.includes(p.status) ? p.status : order[0]
+      grouped[key].push(p)
+    })
+    return order.map((status) => ({
+      status,
+      label: statusOptions.find((o) => o.value === status)?.label ?? status,
+      projects: grouped[status] ?? [],
+    }))
+  }, [filteredProjects])
+
   useEffect(() => {
     setCurrentPage(1)
+    setKanbanVisibleCount({})
   }, [filteredProjects.length])
 
   const columns = [
@@ -273,83 +292,74 @@ export default function Projects() {
                     }}
                   />
                 ) : filteredProjects.length ? (
-                  <>
-                  <Row gutter={[16, 16]}>
-                    {filteredProjects.slice((currentPage - 1) * pageSize, currentPage * pageSize).map((p) => (
-                      <Col key={p.id} xs={24} sm={12} lg={8} xl={6}>
-                        <Card
-                          hoverable
-                          onClick={() => navigate(`/projects/${p.id}`)}
-                          styles={{ body: { padding: 16 } }}
+                  <div style={{ display: 'flex', gap: 16, overflowX: 'auto', paddingBottom: 8, minHeight: 400 }}>
+                    {projectKanbanColumns.map((col) => {
+                      const visibleCount = kanbanVisibleCount[`all-${col.status}`] || KANBAN_INITIAL_COUNT
+                      const visibleProjects = col.projects.slice(0, visibleCount)
+                      const hasMore = col.projects.length > visibleCount
+                      const remaining = col.projects.length - visibleCount
+                      return (
+                        <div
+                          key={col.status}
+                          style={{
+                            flex: '0 0 280px',
+                            minWidth: 280,
+                            background: '#f5f5f5',
+                            borderRadius: 8,
+                            padding: 12,
+                            display: 'flex',
+                            flexDirection: 'column',
+                            maxHeight: 'calc(100vh - 280px)',
+                          }}
                         >
-                          <Space direction="vertical" size={10} style={{ width: '100%' }}>
-                            {(() => {
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, flexShrink: 0 }}>
+                            <Typography.Text strong>{col.label}</Typography.Text>
+                            <Tag>{col.projects.length}</Tag>
+                          </div>
+                          <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                            {visibleProjects.map((p) => {
                               const d = getProjectById(p.id)
                               const membersCount = d?.members.length ?? 0
                               const tasksCount = d?.tasks.length ?? 0
-                              const notesCount = d?.notes.length ?? 0
-                              const filesCount = d?.files.length ?? 0
                               return (
-                                <>
-                                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-                                    <div style={{ minWidth: 0 }}>
-                                      <Typography.Text strong style={{ display: 'block' }} ellipsis={{ tooltip: p.projectName }}>
-                                        {p.projectName}
-                                      </Typography.Text>
-                                      <Typography.Text type="secondary">{p.projectId}</Typography.Text>
-                                    </div>
-                                    <Button
-                                      type="link"
-                                      icon={<EyeOutlined />}
-                                      onClick={(e) => { e.stopPropagation(); navigate(`/projects/${p.id}`) }}
-                                    >
-                                      View
-                                    </Button>
-                                  </div>
-                    <Space wrap size={6}>
-                      <Tag color={priorityColors[p.priority] || 'default'}>{p.priority}</Tag>
-                      <Tag color={p.status === 'Completed' ? 'green' : p.status === 'Pending completion' ? 'orange' : 'default'}>{p.status}</Tag>
-                      <Tag>{p.category}</Tag>
-                    </Space>
-                                  <Space wrap size={10} style={{ color: 'rgba(0,0,0,0.65)' }}>
-                                    <Typography.Text type="secondary"><TeamOutlined /> {membersCount}</Typography.Text>
-                                    <Typography.Text type="secondary"><CheckSquareOutlined /> {tasksCount}</Typography.Text>
-                                    <Typography.Text type="secondary"><FileOutlined /> {filesCount}</Typography.Text>
-                                    <Typography.Text type="secondary"><CommentOutlined /> {notesCount}</Typography.Text>
+                                <Card
+                                  key={p.id}
+                                  size="small"
+                                  hoverable
+                                  onClick={() => navigate(`/projects/${p.id}`)}
+                                  styles={{ body: { padding: 12 } }}
+                                >
+                                  <Typography.Text strong style={{ display: 'block' }} ellipsis={{ tooltip: p.projectName }}>
+                                    {p.projectName}
+                                  </Typography.Text>
+                                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>{p.projectId}</Typography.Text>
+                                  <Space size={6} style={{ marginTop: 8 }} wrap>
+                                    <Tag color={priorityColors[p.priority] || 'default'} style={{ margin: 0 }}>{p.priority}</Tag>
+                                    <Tag color={p.status === 'Completed' ? 'green' : p.status === 'Pending completion' ? 'orange' : 'default'} style={{ margin: 0 }}>{p.category}</Tag>
                                   </Space>
-                                  <div>
-                                    <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 4 }}>Progress</Typography.Text>
-                                    <Space size={8} align="center">
-                                      <Progress percent={p.progress} size="small" showInfo={false} style={{ width: 120, marginBottom: 0 }} />
-                                      <Typography.Text type="secondary" style={{ whiteSpace: 'nowrap' }}>{p.progress}%</Typography.Text>
-                                    </Space>
-                                  </div>
-                                  <Space size={12} style={{ color: 'rgba(0,0,0,0.65)' }} wrap>
-                                    <Typography.Text type="secondary">Start: {p.startDate}</Typography.Text>
-                                    <Typography.Text type="secondary">End: {p.endDate}</Typography.Text>
+                                  <Space size={8} style={{ marginTop: 6, fontSize: 12, color: 'rgba(0,0,0,0.65)' }}>
+                                    <span><TeamOutlined /> {membersCount}</span>
+                                    <span><CheckSquareOutlined /> {tasksCount}</span>
                                   </Space>
-                                </>
+                                  <Progress percent={p.progress} size="small" showInfo={false} style={{ marginTop: 6, marginBottom: 0 }} />
+                                </Card>
                               )
-                            })()}
-                          </Space>
-                        </Card>
-                      </Col>
-                    ))}
-                  </Row>
-                  <Pagination
-                    current={currentPage}
-                    pageSize={pageSize}
-                    total={filteredProjects.length}
-                    showSizeChanger
-                    pageSizeOptions={['10', '20', '50']}
-                    showTotal={(total) => `Total ${total} items`}
-                    onChange={(page, size) => {
-                      setCurrentPage(page)
-                      if (size) setPageSize(size)
-                    }}
-                    style={{ marginTop: 16, display: 'flex', justifyContent: 'flex-end' }}
-                  />
-                  </>
+                            })}
+                            {hasMore && (
+                              <Button
+                                type="link"
+                                size="small"
+                                onClick={() => setKanbanVisibleCount((prev) => ({ ...prev, [`all-${col.status}`]: visibleCount + KANBAN_LOAD_MORE }))}
+                                style={{ marginTop: 4 }}
+                              >
+                                Show more ({remaining} remaining)
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
                 ) : (
                   <Card>
                     <Empty
@@ -448,83 +458,74 @@ export default function Projects() {
                     locale={{ emptyText: currentUserMemberId ? 'No projects where you are lead or member.' : 'Log in as an admin who is a project member to see My Projects.' }}
                   />
                 ) : filteredProjects.length ? (
-                  <>
-                  <Row gutter={[16, 16]}>
-                    {filteredProjects.slice((currentPage - 1) * pageSize, currentPage * pageSize).map((p) => (
-                      <Col key={p.id} xs={24} sm={12} lg={8} xl={6}>
-                        <Card
-                          hoverable
-                          onClick={() => navigate(`/projects/${p.id}`)}
-                          styles={{ body: { padding: 16 } }}
+                  <div style={{ display: 'flex', gap: 16, overflowX: 'auto', paddingBottom: 8, minHeight: 400 }}>
+                    {projectKanbanColumns.map((col) => {
+                      const visibleCount = kanbanVisibleCount[`my-${col.status}`] || KANBAN_INITIAL_COUNT
+                      const visibleProjects = col.projects.slice(0, visibleCount)
+                      const hasMore = col.projects.length > visibleCount
+                      const remaining = col.projects.length - visibleCount
+                      return (
+                        <div
+                          key={col.status}
+                          style={{
+                            flex: '0 0 280px',
+                            minWidth: 280,
+                            background: '#f5f5f5',
+                            borderRadius: 8,
+                            padding: 12,
+                            display: 'flex',
+                            flexDirection: 'column',
+                            maxHeight: 'calc(100vh - 280px)',
+                          }}
                         >
-                          <Space direction="vertical" size={10} style={{ width: '100%' }}>
-                            {(() => {
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, flexShrink: 0 }}>
+                            <Typography.Text strong>{col.label}</Typography.Text>
+                            <Tag>{col.projects.length}</Tag>
+                          </div>
+                          <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                            {visibleProjects.map((p) => {
                               const d = getProjectById(p.id)
                               const membersCount = d?.members.length ?? 0
                               const tasksCount = d?.tasks.length ?? 0
-                              const notesCount = d?.notes.length ?? 0
-                              const filesCount = d?.files.length ?? 0
                               return (
-                                <>
-                                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-                                    <div style={{ minWidth: 0 }}>
-                                      <Typography.Text strong style={{ display: 'block' }} ellipsis={{ tooltip: p.projectName }}>
-                                        {p.projectName}
-                                      </Typography.Text>
-                                      <Typography.Text type="secondary">{p.projectId}</Typography.Text>
-                                    </div>
-                                    <Button
-                                      type="link"
-                                      icon={<EyeOutlined />}
-                                      onClick={(e) => { e.stopPropagation(); navigate(`/projects/${p.id}`) }}
-                                    >
-                                      View
-                                    </Button>
-                                  </div>
-                                  <Space wrap size={6}>
-                                    <Tag color={priorityColors[p.priority] || 'default'}>{p.priority}</Tag>
-                                    <Tag color={p.status === 'Completed' ? 'green' : p.status === 'Pending completion' ? 'orange' : 'default'}>{p.status}</Tag>
-                                    <Tag>{p.category}</Tag>
+                                <Card
+                                  key={p.id}
+                                  size="small"
+                                  hoverable
+                                  onClick={() => navigate(`/projects/${p.id}`)}
+                                  styles={{ body: { padding: 12 } }}
+                                >
+                                  <Typography.Text strong style={{ display: 'block' }} ellipsis={{ tooltip: p.projectName }}>
+                                    {p.projectName}
+                                  </Typography.Text>
+                                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>{p.projectId}</Typography.Text>
+                                  <Space size={6} style={{ marginTop: 8 }} wrap>
+                                    <Tag color={priorityColors[p.priority] || 'default'} style={{ margin: 0 }}>{p.priority}</Tag>
+                                    <Tag color={p.status === 'Completed' ? 'green' : p.status === 'Pending completion' ? 'orange' : 'default'} style={{ margin: 0 }}>{p.category}</Tag>
                                   </Space>
-                                  <Space wrap size={10} style={{ color: 'rgba(0,0,0,0.65)' }}>
-                                    <Typography.Text type="secondary"><TeamOutlined /> {membersCount}</Typography.Text>
-                                    <Typography.Text type="secondary"><CheckSquareOutlined /> {tasksCount}</Typography.Text>
-                                    <Typography.Text type="secondary"><FileOutlined /> {filesCount}</Typography.Text>
-                                    <Typography.Text type="secondary"><CommentOutlined /> {notesCount}</Typography.Text>
+                                  <Space size={8} style={{ marginTop: 6, fontSize: 12, color: 'rgba(0,0,0,0.65)' }}>
+                                    <span><TeamOutlined /> {membersCount}</span>
+                                    <span><CheckSquareOutlined /> {tasksCount}</span>
                                   </Space>
-                                  <div>
-                                    <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 4 }}>Progress</Typography.Text>
-                                    <Space size={8} align="center">
-                                      <Progress percent={p.progress} size="small" showInfo={false} style={{ width: 120, marginBottom: 0 }} />
-                                      <Typography.Text type="secondary" style={{ whiteSpace: 'nowrap' }}>{p.progress}%</Typography.Text>
-                                    </Space>
-                                  </div>
-                                  <Space size={12} style={{ color: 'rgba(0,0,0,0.65)' }} wrap>
-                                    <Typography.Text type="secondary">Start: {p.startDate}</Typography.Text>
-                                    <Typography.Text type="secondary">End: {p.endDate}</Typography.Text>
-                                  </Space>
-                                </>
+                                  <Progress percent={p.progress} size="small" showInfo={false} style={{ marginTop: 6, marginBottom: 0 }} />
+                                </Card>
                               )
-                            })()}
-                          </Space>
-                        </Card>
-                      </Col>
-                    ))}
-                  </Row>
-                  <Pagination
-                    current={currentPage}
-                    pageSize={pageSize}
-                    total={filteredProjects.length}
-                    showSizeChanger
-                    pageSizeOptions={['10', '20', '50']}
-                    showTotal={(total) => `Total ${total} items`}
-                    onChange={(page, size) => {
-                      setCurrentPage(page)
-                      if (size) setPageSize(size)
-                    }}
-                    style={{ marginTop: 16, display: 'flex', justifyContent: 'flex-end' }}
-                  />
-                  </>
+                            })}
+                            {hasMore && (
+                              <Button
+                                type="link"
+                                size="small"
+                                onClick={() => setKanbanVisibleCount((prev) => ({ ...prev, [`my-${col.status}`]: visibleCount + KANBAN_LOAD_MORE }))}
+                                style={{ marginTop: 4 }}
+                              >
+                                Show more ({remaining} remaining)
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
                 ) : (
                   <Card>
                     <Empty

@@ -45,6 +45,14 @@ const taskStatusFilterOptions = [
   { value: 'Completed', label: 'Completed' },
 ]
 
+const TASK_KANBAN_STATUSES = ['To do', 'In progress', 'Pending completion', 'Completed']
+function taskStatusTagColor(s: string): string {
+  if (s === 'Completed') return 'green'
+  if (s === 'In progress') return 'blue'
+  if (s === 'Pending completion') return 'orange'
+  return 'default'
+}
+
 function formatDate(d: string) {
   try {
     return new Date(d).toLocaleString()
@@ -89,6 +97,9 @@ export default function Tasks() {
   const [viewMode, setViewMode] = useState<'list' | 'grid'>('list')
   const [currentPage, setCurrentPage] = useState(1)
   const [pageSize, setPageSize] = useState(10)
+  const [kanbanVisibleCount, setKanbanVisibleCount] = useState<Record<string, number>>({})
+  const KANBAN_INITIAL_COUNT = 40
+  const KANBAN_LOAD_MORE = 20
   const [editDrawerOpen, setEditDrawerOpen] = useState(false)
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null)
   const [drawerTab, setDrawerTab] = useState('details')
@@ -268,8 +279,22 @@ export default function Tasks() {
     })
   }, [baseTasks, searchText, statusFilter, dateRange])
 
+  const taskKanbanColumns = useMemo(() => {
+    const grouped: Record<string, Task[]> = {}
+    TASK_KANBAN_STATUSES.forEach((s) => { grouped[s] = [] })
+    filteredTasks.forEach((t) => {
+      const key = TASK_KANBAN_STATUSES.includes(t.status) ? t.status : TASK_KANBAN_STATUSES[0]
+      grouped[key].push(t)
+    })
+    return TASK_KANBAN_STATUSES.map((status) => ({
+      status,
+      tasks: grouped[status] ?? [],
+    }))
+  }, [filteredTasks])
+
   useEffect(() => {
     setCurrentPage(1)
+    setKanbanVisibleCount({})
   }, [filteredTasks.length])
 
   const noteColumns = [
@@ -402,72 +427,90 @@ export default function Tasks() {
     </Card>
   )
 
-  const gridTasks = filteredTasks.slice((currentPage - 1) * pageSize, currentPage * pageSize)
-
-  const renderTaskGrid = (emptyText: string) =>
+  const renderTaskKanban = (emptyText: string) =>
     filteredTasks.length ? (
-      <>
-        <Row gutter={[16, 16]}>
-          {gridTasks.map((t) => {
-            const assignees = getTaskAssignees(t)
-            return (
-              <Col key={t.id} xs={24} sm={12} lg={8} xl={6}>
-                <Card
-                  hoverable={canEditTask(t)}
-                  onClick={canEditTask(t) ? () => openEditDrawer(t.id) : undefined}
-                  styles={{ body: { padding: 16 } }}
-                >
-                  <Space direction="vertical" size={8} style={{ width: '100%' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-                      <Typography.Text strong style={{ display: 'block', minWidth: 0 }} ellipsis={{ tooltip: t.taskName }}>
-                        {t.taskName}
+      <div style={{ display: 'flex', gap: 16, overflowX: 'auto', paddingBottom: 8, minHeight: 400 }}>
+        {taskKanbanColumns.map((col) => {
+          const visibleCount = kanbanVisibleCount[col.status] || KANBAN_INITIAL_COUNT
+          const visibleTasks = col.tasks.slice(0, visibleCount)
+          const hasMore = col.tasks.length > visibleCount
+          const remaining = col.tasks.length - visibleCount
+          return (
+            <div
+              key={col.status}
+              style={{
+                flex: '0 0 280px',
+                minWidth: 280,
+                background: '#f5f5f5',
+                borderRadius: 8,
+                padding: 12,
+                display: 'flex',
+                flexDirection: 'column',
+                maxHeight: 'calc(100vh - 280px)',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, flexShrink: 0 }}>
+                <Typography.Text strong>{col.status}</Typography.Text>
+                <Tag>{col.tasks.length}</Tag>
+              </div>
+              <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {visibleTasks.map((t) => {
+                  const assignees = getTaskAssignees(t)
+                  return (
+                    <Card
+                      key={t.id}
+                      size="small"
+                      hoverable={canEditTask(t)}
+                      onClick={canEditTask(t) ? () => openEditDrawer(t.id) : undefined}
+                      styles={{ body: { padding: 12 } }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+                        <Typography.Text strong style={{ display: 'block', minWidth: 0 }} ellipsis={{ tooltip: t.taskName }}>
+                          {t.taskName}
+                        </Typography.Text>
+                        {canEditTask(t) && (
+                          <Button
+                            type="link"
+                            size="small"
+                            icon={<EditOutlined />}
+                            onClick={(e) => { e.stopPropagation(); openEditDrawer(t.id) }}
+                          >
+                            Edit
+                          </Button>
+                        )}
+                      </div>
+                      <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block' }} ellipsis={{ tooltip: t.projectName }}>
+                        {t.projectName}
                       </Typography.Text>
-                      {canEditTask(t) && (
-                        <Button
-                          type="link"
-                          size="small"
-                          icon={<EditOutlined />}
-                          onClick={(e) => { e.stopPropagation(); openEditDrawer(t.id) }}
-                        >
-                          Edit
-                        </Button>
+                      {assignees.length > 0 && (
+                        <Space size={4} wrap style={{ marginTop: 6 }}>
+                          {assignees.map((a) => (
+                            <Tag key={a.memberId} style={{ margin: 0 }}>{a.name}</Tag>
+                          ))}
+                        </Space>
                       )}
-                    </div>
-                    <Typography.Text type="secondary" style={{ display: 'block' }}>{t.projectName}</Typography.Text>
-                    <Tag color={t.status === 'Completed' ? 'green' : t.status === 'In progress' ? 'blue' : 'default'}>
-                      {t.status}
-                    </Tag>
-                    {assignees.length > 0 && (
-                      <Space size={4} wrap>
-                        {assignees.map((a) => (
-                          <Tag key={a.memberId}>{a.name}</Tag>
-                        ))}
+                      <Space size={8} style={{ marginTop: 6, fontSize: 12, color: 'rgba(0,0,0,0.65)' }}>
+                        <span>Start: {t.startDate ?? '—'}</span>
+                        <span>End: {t.endDate ?? '—'}</span>
                       </Space>
-                    )}
-                    <Space size={12} style={{ color: 'rgba(0,0,0,0.65)' }} wrap>
-                      <Typography.Text type="secondary">Start: {t.startDate ?? '—'}</Typography.Text>
-                      <Typography.Text type="secondary">End: {t.endDate ?? '—'}</Typography.Text>
-                    </Space>
-                  </Space>
-                </Card>
-              </Col>
-            )
-          })}
-        </Row>
-        <Pagination
-          current={currentPage}
-          pageSize={pageSize}
-          total={filteredTasks.length}
-          showSizeChanger
-          pageSizeOptions={['10', '20', '50']}
-          showTotal={(total) => `Total ${total} items`}
-          onChange={(page, size) => {
-            setCurrentPage(page)
-            if (size) setPageSize(size)
-          }}
-          style={{ marginTop: 16, display: 'flex', justifyContent: 'flex-end' }}
-        />
-      </>
+                    </Card>
+                  )
+                })}
+                {hasMore && (
+                  <Button
+                    type="link"
+                    size="small"
+                    onClick={() => setKanbanVisibleCount((prev) => ({ ...prev, [col.status]: visibleCount + KANBAN_LOAD_MORE }))}
+                    style={{ marginTop: 4 }}
+                  >
+                    Show more ({remaining} remaining)
+                  </Button>
+                )}
+              </div>
+            </div>
+          )
+        })}
+      </div>
     ) : (
       <Card>
         <Empty description={emptyText} />
@@ -511,7 +554,7 @@ export default function Tasks() {
               locale={{ emptyText: allTasksEmptyText }}
             />
           ) : (
-            renderTaskGrid(allTasksEmptyText)
+            renderTaskKanban(allTasksEmptyText)
           )}
         </>
       ),
@@ -552,7 +595,7 @@ export default function Tasks() {
               locale={{ emptyText: myTasksEmptyText }}
             />
           ) : (
-            renderTaskGrid(myTasksEmptyText)
+            renderTaskKanban(myTasksEmptyText)
           )}
         </>
       ),

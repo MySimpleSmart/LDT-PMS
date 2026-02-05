@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
-import { Layout, Menu, Typography, Dropdown, Space, Badge, Button } from 'antd'
+import { Layout, Menu, Typography, Dropdown, Space, Badge, Button, Modal } from 'antd'
 import type { MenuProps } from 'antd'
 import {
   DashboardOutlined,
@@ -17,6 +17,7 @@ import {
   BellOutlined,
   BookOutlined,
   ReadOutlined,
+  DownOutlined,
 } from '@ant-design/icons'
 
 import { useAuth } from '../context/AuthContext'
@@ -84,8 +85,17 @@ export default function AppLayout() {
     if (key === 'profile' && hasProfile) {
       confirmNavigation(profilePath, () => navigate(profilePath))
     } else if (key === 'logout') {
-      setCurrentAdminId(null)
-      authSignOut().then(() => navigate('/login', { replace: true }))
+      Modal.confirm({
+        title: 'Log out?',
+        content: 'Are you sure you want to log out?',
+        okText: 'Log out',
+        okButtonProps: { danger: true },
+        cancelText: 'Cancel',
+        onOk: () => {
+          setCurrentAdminId(null)
+          authSignOut().then(() => navigate('/login', { replace: true }))
+        },
+      })
     }
   }
 
@@ -97,7 +107,23 @@ export default function AppLayout() {
           <Typography.Text type="secondary" style={{ marginBottom: 24, textAlign: 'center', maxWidth: 400 }}>
             Your account does not have access to the project lead dashboard. Only Super Admin and project leads can use this area. Contact Super Admin if you need access.
           </Typography.Text>
-          <Button type="primary" danger onClick={() => { setCurrentAdminId(null); authSignOut().then(() => navigate('/login', { replace: true })) }}>
+          <Button
+            type="primary"
+            danger
+            onClick={() => {
+              Modal.confirm({
+                title: 'Log out?',
+                content: 'Are you sure you want to log out?',
+                okText: 'Log out',
+                okButtonProps: { danger: true },
+                cancelText: 'Cancel',
+                onOk: () => {
+                  setCurrentAdminId(null)
+                  authSignOut().then(() => navigate('/login', { replace: true }))
+                },
+              })
+            }}
+          >
             Log out
           </Button>
         </div>
@@ -206,6 +232,7 @@ export default function AppLayout() {
                   size={32}
                 />
                 <Typography.Text>{isLoggedIn ? displayName : 'Not logged in'}</Typography.Text>
+                <DownOutlined style={{ fontSize: 12, color: 'rgba(0,0,0,0.45)' }} />
               </Space>
             </Dropdown>
           </div>

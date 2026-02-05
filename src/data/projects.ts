@@ -59,6 +59,44 @@ type DemoProjectSeed = {
   createdAt: string
 }
 
+// Generate demo tasks for pagination testing
+function generateDemoTasks(): ProjectTask[] {
+  const baseTasks: ProjectTask[] = [
+    { key: '1', title: 'Setup API', status: 'Completed', assigneeMemberId: 'LDA0001', assigneeName: 'Jane Doe', startDate: '2025-01-15', endDate: '2025-01-28' },
+    { key: '2', title: 'Auth module', status: 'In progress', assigneeMemberId: 'ADA0002', assigneeName: 'Alex River', startDate: '2025-01-22', endDate: '2025-02-15' },
+    { key: '3', title: 'Deploy staging', status: 'To do', assigneeMemberId: 'LDA0009', assigneeName: 'Olivia Garcia', startDate: '2025-02-10', endDate: '2025-03-05' },
+    { key: '4', title: 'Write docs', status: 'To do', assigneeMemberId: 'ADA0001', assigneeName: 'Sam Admin', startDate: '2025-03-01', endDate: '2025-03-31' },
+  ]
+  const assignees = [
+    { memberId: 'LDA0001', name: 'Jane Doe' },
+    { memberId: 'ADA0002', name: 'Alex River' },
+    { memberId: 'LDA0009', name: 'Olivia Garcia' },
+    { memberId: 'ADA0001', name: 'Sam Admin' },
+    { memberId: 'LDA0010', name: 'Daniel Nguyen' },
+  ]
+  const taskTitles = [
+    'API endpoint review', 'Database optimization', 'Cache implementation', 'Error handling',
+    'Unit tests', 'Integration tests', 'Code refactoring', 'Performance tuning',
+    'Security audit', 'Documentation update', 'Code review', 'Bug fix',
+    'Feature enhancement', 'UI improvements', 'Backend optimization', 'API versioning',
+  ]
+  // Add 50 more "To do" tasks to test pagination
+  for (let i = 5; i <= 55; i++) {
+    const assignee = assignees[(i - 5) % assignees.length]
+    const title = `${taskTitles[(i - 5) % taskTitles.length]} #${i}`
+    baseTasks.push({
+      key: String(i),
+      title,
+      status: 'To do',
+      assigneeMemberId: assignee.memberId,
+      assigneeName: assignee.name,
+      startDate: '2025-02-15',
+      endDate: '2025-03-15',
+    })
+  }
+  return baseTasks
+}
+
 const DEMO_PROJECTS: DemoProjectSeed[] = [
   {
     id: '1',
@@ -70,12 +108,7 @@ const DEMO_PROJECTS: DemoProjectSeed[] = [
     startDate: '2025-01-15',
     endDate: '2025-03-31',
     status: 'In Progress',
-    tasks: [
-      { key: '1', title: 'Setup API', status: 'Completed', assigneeMemberId: 'LDA0001', assigneeName: 'Jane Doe', startDate: '2025-01-15', endDate: '2025-01-28' },
-      { key: '2', title: 'Auth module', status: 'In progress', assigneeMemberId: 'ADA0002', assigneeName: 'Alex River', startDate: '2025-01-22', endDate: '2025-02-15' },
-      { key: '3', title: 'Deploy staging', status: 'To do', assigneeMemberId: 'LDA0009', assigneeName: 'Olivia Garcia', startDate: '2025-02-10', endDate: '2025-03-05' },
-      { key: '4', title: 'Write docs', status: 'To do', assigneeMemberId: 'ADA0001', assigneeName: 'Sam Admin', startDate: '2025-03-01', endDate: '2025-03-31' },
-    ],
+    tasks: generateDemoTasks(),
     members: [
       { key: '1', memberId: 'ADA0001', name: 'Sam Admin', role: 'Lead' },
       { key: '2', memberId: 'ADA0002', name: 'Alex River', role: 'Contributor' },
