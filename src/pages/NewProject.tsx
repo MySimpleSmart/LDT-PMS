@@ -6,6 +6,7 @@ import { ArrowLeftOutlined, TeamOutlined } from '@ant-design/icons'
 import { useProjectMeta } from '../context/ProjectMetaContext'
 import { getMembersList } from '../data/members'
 import { useUnsavedChanges } from '../context/UnsavedChangesContext'
+import { useCurrentUser } from '../context/CurrentUserContext'
 
 const priorityOptions = [
   { value: 'Low', label: 'Low' },
@@ -18,6 +19,8 @@ const statusOptions = [
   { value: 'Not Started', label: 'Not Started' },
   { value: 'In Progress', label: 'In Progress' },
   { value: 'On Hold', label: 'On Hold' },
+  { value: 'Pending completion', label: 'Pending completion' },
+  { value: 'Completed', label: 'Completed' },
 ]
 
 function formatBytes(bytes?: number) {
@@ -30,10 +33,15 @@ function formatBytes(bytes?: number) {
 
 export default function NewProject() {
   const navigate = useNavigate()
+  const { isSuperAdmin } = useCurrentUser()
   const [form] = Form.useForm()
   const { categories, tags } = useProjectMeta()
   const [fileList, setFileList] = useState<UploadFile[]>([])
   const { dirty, setDirty, confirmNavigation } = useUnsavedChanges()
+
+  useEffect(() => {
+    if (!isSuperAdmin) navigate('/projects', { replace: true })
+  }, [isSuperAdmin, navigate])
 
   useEffect(() => {
     // Reset dirty flag when entering/leaving this page

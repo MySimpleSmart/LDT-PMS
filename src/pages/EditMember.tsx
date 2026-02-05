@@ -1,9 +1,12 @@
 import { useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { Card, Form, Input, Select, Button, Space, Typography, message, Row, Col } from 'antd'
-import { ArrowLeftOutlined } from '@ant-design/icons'
+import { Card, Form, Input, Select, Button, Space, Typography, Tag, message, Row, Col, Modal } from 'antd'
+import { ArrowLeftOutlined, DeleteOutlined } from '@ant-design/icons'
 import { getMemberById } from '../data/members'
 import AvatarPicker from '../components/AvatarPicker'
+import { useCurrentUser } from '../context/CurrentUserContext'
+import { SYSTEM_ROLE } from '../constants/roles'
+import { ADMIN_POSITION_OPTIONS } from '../data/admins'
 
 const departmentOptions = [
   { value: 'Engineering', label: 'Engineering' },
@@ -13,18 +16,28 @@ const departmentOptions = [
   { value: 'Operations', label: 'Operations' },
 ]
 
-const roleOptions = [
+const jobTypeOptions = [
   { value: 'Developer', label: 'Developer' },
   { value: 'Designer', label: 'Designer' },
-  { value: 'Manager', label: 'Manager' },
+  { value: 'QA', label: 'QA' },
+  { value: 'PM', label: 'PM' },
+  { value: 'Coordinator', label: 'Coordinator' },
+  { value: 'Marketer', label: 'Marketer' },
+  { value: 'DevOps', label: 'DevOps' },
+  { value: 'Researcher', label: 'Researcher' },
   { value: 'Analyst', label: 'Analyst' },
 ]
 
 export default function EditMember() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const { isSuperAdmin } = useCurrentUser()
   const [form] = Form.useForm()
   const member = id ? getMemberById(id) : null
+
+  useEffect(() => {
+    if (!isSuperAdmin) navigate('/members', { replace: true })
+  }, [isSuperAdmin, navigate])
 
   useEffect(() => {
     if (member) {
@@ -34,7 +47,7 @@ export default function EditMember() {
         email: member.email,
         phone: member.phone,
         department: member.department,
-        role: member.role,
+        jobType: member.jobType ?? '',
         position: member.position,
         accountStatus: member.accountStatus,
         profileImage: member.profileImage ?? undefined,
@@ -42,9 +55,25 @@ export default function EditMember() {
     }
   }, [member, form])
 
+  const handleRemoveMember = () => {
+    Modal.confirm({
+      title: 'Remove member',
+      content: `Are you sure you want to remove ${member?.firstName} ${member?.lastName}? They will lose access to the system.`,
+      okText: 'Remove',
+      okType: 'danger',
+      cancelText: 'Cancel',
+      onOk: () => {
+        // TODO: Remove from Firebase (deleteDoc from 'members' collection)
+        message.success('Member removed.')
+        navigate('/members')
+      },
+    })
+  }
+
   const onFinish = (values: Record<string, unknown>) => {
+    const payload = { ...values, role: SYSTEM_ROLE.MEMBER }
     // TODO: Update in Firebase (e.g. updateDoc in 'members' collection)
-    console.log('Update member:', id, values)
+    console.log('Update member:', id, payload)
     message.success('Profile updated successfully.')
     navigate(`/members/${id}`)
   }
@@ -134,22 +163,16 @@ export default function EditMember() {
                 />
               </Form.Item>
 
-              <Form.Item
-                name="role"
-                label="Role"
-                rules={[{ required: true, message: 'Please select or enter role' }]}
-              >
-                <Select
-                  placeholder="Select or type role"
-                  allowClear
-                  showSearch
-                  optionFilterProp="label"
-                  options={roleOptions}
-                />
+              <Form.Item label="Role">
+                <Tag color="default">{SYSTEM_ROLE.MEMBER}</Tag>
+              </Form.Item>
+
+              <Form.Item name="jobType" label="Job type" rules={[{ required: true, message: 'Please select job type' }]}>
+                <Select placeholder="Select job type" allowClear showSearch optionFilterProp="label" options={jobTypeOptions} />
               </Form.Item>
 
               <Form.Item name="position" label="Position">
-                <Input placeholder="e.g. Senior Software Engineer" />
+                <Select placeholder="Select position" allowClear showSearch optionFilterProp="label" options={ADMIN_POSITION_OPTIONS} />
               </Form.Item>
 
               <Form.Item name="accountStatus" label="Account status">
@@ -164,13 +187,18 @@ export default function EditMember() {
           </Row>
 
           <Form.Item>
-            <Space>
+            <Space wrap>
               <Button type="primary" htmlType="submit">
                 Save changes
               </Button>
               <Button onClick={() => navigate(`/members/${id}`)}>
                 Cancel
               </Button>
+              {isSuperAdmin && (
+                <Button danger icon={<DeleteOutlined />} onClick={handleRemoveMember}>
+                  Remove member
+                </Button>
+              )}
             </Space>
           </Form.Item>
         </Form>

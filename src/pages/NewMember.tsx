@@ -1,15 +1,37 @@
+import { useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Card, Form, Input, Select, Button, Space, Typography, message, Row, Col } from 'antd'
+import { Card, Form, Input, Select, Button, Space, Typography, Tag, message, Row, Col } from 'antd'
 import { ArrowLeftOutlined } from '@ant-design/icons'
 import AvatarPicker from '../components/AvatarPicker'
+import { useCurrentUser } from '../context/CurrentUserContext'
+import { SYSTEM_ROLE } from '../constants/roles'
+import { ADMIN_POSITION_OPTIONS } from '../data/admins'
+
+const jobTypeOptions = [
+  { value: 'Developer', label: 'Developer' },
+  { value: 'Designer', label: 'Designer' },
+  { value: 'QA', label: 'QA' },
+  { value: 'PM', label: 'PM' },
+  { value: 'Coordinator', label: 'Coordinator' },
+  { value: 'Marketer', label: 'Marketer' },
+  { value: 'DevOps', label: 'DevOps' },
+  { value: 'Researcher', label: 'Researcher' },
+  { value: 'Analyst', label: 'Analyst' },
+]
 
 export default function NewMember() {
   const navigate = useNavigate()
+  const { isSuperAdmin } = useCurrentUser()
   const [form] = Form.useForm()
 
+  useEffect(() => {
+    if (!isSuperAdmin) navigate('/members', { replace: true })
+  }, [isSuperAdmin, navigate])
+
   const onFinish = (values: Record<string, unknown>) => {
+    const payload = { ...values, role: SYSTEM_ROLE.MEMBER }
     // TODO: Save to Firebase (e.g. addDoc to 'members' collection)
-    console.log('New member:', values)
+    console.log('New member:', payload)
     message.success('Member added successfully.')
     navigate('/members')
   }
@@ -94,27 +116,16 @@ export default function NewMember() {
                 />
               </Form.Item>
 
-              <Form.Item
-                name="role"
-                label="Role"
-                rules={[{ required: true, message: 'Please select or enter role' }]}
-              >
-                <Select
-                  placeholder="Select or type role"
-                  allowClear
-                  showSearch
-                  optionFilterProp="label"
-                  options={[
-                    { value: 'Developer', label: 'Developer' },
-                    { value: 'Designer', label: 'Designer' },
-                    { value: 'Manager', label: 'Manager' },
-                    { value: 'Analyst', label: 'Analyst' },
-                  ]}
-                />
+              <Form.Item label="Role">
+                <Tag color="default">{SYSTEM_ROLE.MEMBER}</Tag>
+              </Form.Item>
+
+              <Form.Item name="jobType" label="Job type" rules={[{ required: true, message: 'Please select job type' }]}>
+                <Select placeholder="Select job type" allowClear showSearch optionFilterProp="label" options={jobTypeOptions} />
               </Form.Item>
 
               <Form.Item name="position" label="Position">
-                <Input placeholder="e.g. Senior Software Engineer" />
+                <Select placeholder="Select position" allowClear showSearch optionFilterProp="label" options={ADMIN_POSITION_OPTIONS} />
               </Form.Item>
 
               <Form.Item name="accountStatus" label="Account status">

@@ -4,6 +4,7 @@ import { Card, Form, Input, Select, Button, Space, Typography, message, Row, Col
 import { ArrowLeftOutlined } from '@ant-design/icons'
 import { getProjectById } from '../data/projects'
 import { useProjectMeta } from '../context/ProjectMetaContext'
+import { useCurrentUser } from '../context/CurrentUserContext'
 import dayjs from 'dayjs'
 
 const priorityOptions = [
@@ -17,17 +18,24 @@ const statusOptions = [
   { value: 'Not Started', label: 'Not Started' },
   { value: 'In Progress', label: 'In Progress' },
   { value: 'On Hold', label: 'On Hold' },
+  { value: 'Pending completion', label: 'Pending completion' },
+  { value: 'Completed', label: 'Completed' },
 ]
 
 export default function EditProject() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const { isSuperAdmin } = useCurrentUser()
   const [form] = Form.useForm()
   const project = id ? getProjectById(id) : null
   const { categories, tags } = useProjectMeta()
 
   const categoryOptions = categories.map((c) => ({ value: c, label: c }))
   const tagOptions = tags.map((t) => ({ value: t, label: t }))
+
+  useEffect(() => {
+    if (!isSuperAdmin) navigate('/projects', { replace: true })
+  }, [isSuperAdmin, navigate])
 
   useEffect(() => {
     if (project) {

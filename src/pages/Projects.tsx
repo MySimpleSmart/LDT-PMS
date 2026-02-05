@@ -1,11 +1,10 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Typography, Table, Tag, Button, Input, Select, DatePicker, Space, Card, Progress, Segmented, Row, Col, Empty, Tabs } from 'antd'
+import { Typography, Table, Tag, Button, Input, Select, DatePicker, Space, Card, Progress, Segmented, Row, Col, Empty, Tabs, Pagination } from 'antd'
 import { EyeOutlined, PlusOutlined, SearchOutlined, UnorderedListOutlined, AppstoreOutlined, TeamOutlined, CheckSquareOutlined, FileOutlined, CommentOutlined, UserOutlined } from '@ant-design/icons'
 import type { Dayjs } from 'dayjs'
 import dayjs from 'dayjs'
 import { getProjectById, getProjectsList, getRelatedProjectsForMember } from '../data/projects'
-import { getMemberIdForAdminId } from '../data/members'
 import { useCurrentUser } from '../context/CurrentUserContext'
 
 const priorityColors: Record<string, string> = {
@@ -15,10 +14,21 @@ const priorityColors: Record<string, string> = {
   Urgent: 'red',
 }
 
+const PRIORITY_ORDER: Record<string, number> = { Urgent: 4, High: 3, Medium: 2, Low: 1 }
+function priorityRank(p: string): number {
+  return PRIORITY_ORDER[p] ?? 0
+}
+
+const sortOptions = [
+  { value: 'startDate', label: 'Start date (newest first)' },
+  { value: 'priority', label: 'Priority (high first)' },
+]
+
 const statusOptions = [
   { value: 'Not Started', label: 'Not Started' },
   { value: 'In Progress', label: 'In Progress' },
   { value: 'On Hold', label: 'On Hold' },
+  { value: 'Pending completion', label: 'Pending completion' },
   { value: 'Completed', label: 'Completed' },
 ]
 
@@ -26,16 +36,17 @@ type ProjectRow = ReturnType<typeof getProjectsList>[number]
 
 export default function Projects() {
   const navigate = useNavigate()
-  const { currentAdminId } = useCurrentUser()
+  const { currentAdminId, isSuperAdmin, currentUserMemberId } = useCurrentUser()
   const allProjects = useMemo(() => getProjectsList(), [])
 
   const [activeTab, setActiveTab] = useState<string>('all')
   const [searchText, setSearchText] = useState('')
   const [statusFilter, setStatusFilter] = useState<string | null>(null)
   const [dateRange, setDateRange] = useState<[Dayjs | null, Dayjs | null] | null>(null)
+  const [sortBy, setSortBy] = useState<'startDate' | 'priority'>('startDate')
   const [viewMode, setViewMode] = useState<'list' | 'grid'>('list')
-
-  const currentUserMemberId = getMemberIdForAdminId(currentAdminId ?? null)
+  const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize, setPageSize] = useState(10)
   const myProjectIds = useMemo(
     () => (currentUserMemberId ? getRelatedProjectsForMember(currentUserMemberId).map((r) => r.key) : []),
     [currentUserMemberId]
@@ -69,13 +80,52 @@ export default function Projects() {
         return true
       })
     }
-    return list
-  }, [baseProjects, searchText, statusFilter, dateRange])
+    return [...list].sort((a, b) => {
+      if (sortBy === 'priority') {
+        const rankA = priorityRank(a.priority)
+        const rankB = priorityRank(b.priority)
+        return rankB - rankA
+      }
+      const dateA = a.startDate ? dayjs(a.startDate).valueOf() : 0
+      const dateB = b.startDate ? dayjs(b.startDate).valueOf() : 0
+      return dateB - dateA
+    })
+  }, [baseProjects, searchText, statusFilter, dateRange, sortBy])
+
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [filteredProjects.length])
 
   const columns = [
     { title: 'Project ID', dataIndex: 'projectId', key: 'projectId', width: 100 },
     { title: 'Project Name', dataIndex: 'projectName', key: 'projectName' },
     { title: 'Category', dataIndex: 'category', key: 'category' },
+    {
+      title: 'Members',
+      key: 'membersCount',
+      width: 100,
+      render: (_: unknown, r: ProjectRow) => {
+        const detail = getProjectById(r.id)
+        const count = detail?.members?.length ?? 0
+        return (
+          <Space size={4} align="center">
+            <TeamOutlined style={{ color: 'rgba(0,0,0,0.45)' }} />
+            <span>{count}</span>
+          </Space>
+        )
+      },
+    },
+    {
+      title: 'Project Lead',
+      key: 'projectLead',
+      width: 140,
+      render: (_: unknown, r: ProjectRow) => {
+        const detail = getProjectById(r.id)
+        const members = detail?.members ?? []
+        const lead = members.find((m) => m.role === 'Lead') ?? members[0]
+        return lead?.name ?? '—'
+      },
+    },
     {
       title: 'Priority',
       dataIndex: 'priority',
@@ -89,7 +139,7 @@ export default function Projects() {
       key: 'status',
       width: 120,
       render: (status: string) => (
-        <Tag color={status === 'Completed' ? 'green' : 'default'}>{status}</Tag>
+        <Tag color={status === 'Completed' ? 'green' : status === 'Pending completion' ? 'orange' : 'default'}>{status}</Tag>
       ),
     },
     { title: 'Start Date', dataIndex: 'startDate', key: 'startDate', width: 110, render: (d: string) => d || '—' },
@@ -129,9 +179,11 @@ export default function Projects() {
               : 'Manage your projects here. All Projects or My Projects (where you are involved).'}
           </Typography.Text>
         </div>
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => navigate('/projects/new')}>
-          Add project
-        </Button>
+        {isSuperAdmin && (
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => navigate('/projects/new')}>
+            Add project
+          </Button>
+        )}
       </div>
 
       <Tabs
@@ -172,6 +224,13 @@ export default function Projects() {
                         onChange={(dates) => setDateRange(dates as [Dayjs | null, Dayjs | null] | null)}
                         allowClear
                       />
+                      <Select
+                        placeholder="Sort by"
+                        style={{ width: 200 }}
+                        value={sortBy}
+                        onChange={(v) => setSortBy(v as 'startDate' | 'priority')}
+                        options={sortOptions}
+                      />
                       {(searchText || statusFilter || (dateRange && (dateRange[0] || dateRange[1]))) && (
                         <Button
                           onClick={() => {
@@ -200,11 +259,23 @@ export default function Projects() {
                     dataSource={filteredProjects}
                     columns={columns}
                     size="small"
-                    pagination={{ pageSize: 10, showSizeChanger: true }}
+                    pagination={{
+                      current: currentPage,
+                      pageSize,
+                      total: filteredProjects.length,
+                      showSizeChanger: true,
+                      pageSizeOptions: ['10', '20', '50'],
+                      showTotal: (total) => `Total ${total} items`,
+                      onChange: (page, size) => {
+                        setCurrentPage(page)
+                        if (size) setPageSize(size)
+                      },
+                    }}
                   />
                 ) : filteredProjects.length ? (
+                  <>
                   <Row gutter={[16, 16]}>
-                    {filteredProjects.map((p) => (
+                    {filteredProjects.slice((currentPage - 1) * pageSize, currentPage * pageSize).map((p) => (
                       <Col key={p.id} xs={24} sm={12} lg={8} xl={6}>
                         <Card
                           hoverable
@@ -237,7 +308,7 @@ export default function Projects() {
                                   </div>
                     <Space wrap size={6}>
                       <Tag color={priorityColors[p.priority] || 'default'}>{p.priority}</Tag>
-                      <Tag color={p.status === 'Completed' ? 'green' : 'default'}>{p.status}</Tag>
+                      <Tag color={p.status === 'Completed' ? 'green' : p.status === 'Pending completion' ? 'orange' : 'default'}>{p.status}</Tag>
                       <Tag>{p.category}</Tag>
                     </Space>
                                   <Space wrap size={10} style={{ color: 'rgba(0,0,0,0.65)' }}>
@@ -265,6 +336,20 @@ export default function Projects() {
                       </Col>
                     ))}
                   </Row>
+                  <Pagination
+                    current={currentPage}
+                    pageSize={pageSize}
+                    total={filteredProjects.length}
+                    showSizeChanger
+                    pageSizeOptions={['10', '20', '50']}
+                    showTotal={(total) => `Total ${total} items`}
+                    onChange={(page, size) => {
+                      setCurrentPage(page)
+                      if (size) setPageSize(size)
+                    }}
+                    style={{ marginTop: 16, display: 'flex', justifyContent: 'flex-end' }}
+                  />
+                  </>
                 ) : (
                   <Card>
                     <Empty
@@ -313,6 +398,13 @@ export default function Projects() {
                         onChange={(dates) => setDateRange(dates as [Dayjs | null, Dayjs | null] | null)}
                         allowClear
                       />
+                      <Select
+                        placeholder="Sort by"
+                        style={{ width: 200 }}
+                        value={sortBy}
+                        onChange={(v) => setSortBy(v as 'startDate' | 'priority')}
+                        options={sortOptions}
+                      />
                       {(searchText || statusFilter || (dateRange && (dateRange[0] || dateRange[1]))) && (
                         <Button
                           onClick={() => {
@@ -341,12 +433,24 @@ export default function Projects() {
                     dataSource={filteredProjects}
                     columns={columns}
                     size="small"
-                    pagination={{ pageSize: 10, showSizeChanger: true }}
+                    pagination={{
+                      current: currentPage,
+                      pageSize,
+                      total: filteredProjects.length,
+                      showSizeChanger: true,
+                      pageSizeOptions: ['10', '20', '50'],
+                      showTotal: (total) => `Total ${total} items`,
+                      onChange: (page, size) => {
+                        setCurrentPage(page)
+                        if (size) setPageSize(size)
+                      },
+                    }}
                     locale={{ emptyText: currentUserMemberId ? 'No projects where you are lead or member.' : 'Log in as an admin who is a project member to see My Projects.' }}
                   />
                 ) : filteredProjects.length ? (
+                  <>
                   <Row gutter={[16, 16]}>
-                    {filteredProjects.map((p) => (
+                    {filteredProjects.slice((currentPage - 1) * pageSize, currentPage * pageSize).map((p) => (
                       <Col key={p.id} xs={24} sm={12} lg={8} xl={6}>
                         <Card
                           hoverable
@@ -379,7 +483,7 @@ export default function Projects() {
                                   </div>
                                   <Space wrap size={6}>
                                     <Tag color={priorityColors[p.priority] || 'default'}>{p.priority}</Tag>
-                                    <Tag>{p.status}</Tag>
+                                    <Tag color={p.status === 'Completed' ? 'green' : p.status === 'Pending completion' ? 'orange' : 'default'}>{p.status}</Tag>
                                     <Tag>{p.category}</Tag>
                                   </Space>
                                   <Space wrap size={10} style={{ color: 'rgba(0,0,0,0.65)' }}>
@@ -407,6 +511,20 @@ export default function Projects() {
                       </Col>
                     ))}
                   </Row>
+                  <Pagination
+                    current={currentPage}
+                    pageSize={pageSize}
+                    total={filteredProjects.length}
+                    showSizeChanger
+                    pageSizeOptions={['10', '20', '50']}
+                    showTotal={(total) => `Total ${total} items`}
+                    onChange={(page, size) => {
+                      setCurrentPage(page)
+                      if (size) setPageSize(size)
+                    }}
+                    style={{ marginTop: 16, display: 'flex', justifyContent: 'flex-end' }}
+                  />
+                  </>
                 ) : (
                   <Card>
                     <Empty

@@ -1,8 +1,10 @@
 import { useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { Card, Form, Input, Select, Button, Space, Typography, message, Row, Col } from 'antd'
-import { ArrowLeftOutlined } from '@ant-design/icons'
-import { getAdminById } from '../data/admins'
+import { Card, Form, Input, Select, Button, Space, Typography, Tag, message, Row, Col, Modal } from 'antd'
+import { ArrowLeftOutlined, DeleteOutlined } from '@ant-design/icons'
+import { getAdminById, ADMIN_POSITION_OPTIONS, isSuperAdminId } from '../data/admins'
+import { useCurrentUser } from '../context/CurrentUserContext'
+import { ADMIN_ROLE } from '../constants/roles'
 import AvatarPicker from '../components/AvatarPicker'
 
 const departmentOptions = [
@@ -13,17 +15,36 @@ const departmentOptions = [
   { value: 'Operations', label: 'Operations' },
 ]
 
-const roleOptions = [
-  { value: 'Super Admin', label: 'Super Admin' },
-  { value: 'Admin', label: 'Admin' },
-  { value: 'Manager', label: 'Manager' },
-]
-
 export default function EditAdmin() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const { isSuperAdmin, currentAdminId } = useCurrentUser()
   const [form] = Form.useForm()
   const admin = id ? getAdminById(id) : null
+  const isEditingSuperAdmin = isSuperAdminId(id)
+  const canEdit = isSuperAdmin
+    ? true
+    : !isEditingSuperAdmin && currentAdminId // Admin can edit other Admins, not Super Admin
+  const canRemoveAdmin = isSuperAdmin && !isEditingSuperAdmin // Super Admin can remove Admin, not Super Admin
+
+  const handleRemoveAdmin = () => {
+    Modal.confirm({
+      title: 'Remove admin',
+      content: `Are you sure you want to remove ${admin?.firstName} ${admin?.lastName}? They will lose admin access.`,
+      okText: 'Remove',
+      okType: 'danger',
+      cancelText: 'Cancel',
+      onOk: () => {
+        // TODO: Remove from Firebase (deleteDoc from 'admins' collection)
+        message.success('Admin removed.')
+        navigate('/admins')
+      },
+    })
+  }
+
+  useEffect(() => {
+    if (!canEdit) navigate('/admins', { replace: true })
+  }, [canEdit, navigate])
 
   useEffect(() => {
     if (admin) {
@@ -42,8 +63,10 @@ export default function EditAdmin() {
   }, [admin, form])
 
   const onFinish = (values: Record<string, unknown>) => {
+    const role = (isEditingSuperAdmin && isSuperAdmin) ? (values.role as string) : admin.role
+    const payload = { ...values, role }
     // TODO: Update in Firebase (e.g. updateDoc in 'admins' collection)
-    console.log('Update admin:', id, values)
+    console.log('Update admin:', id, payload)
     message.success('Profile updated successfully.')
     navigate(`/admins/${id}`)
   }
@@ -123,16 +146,23 @@ export default function EditAdmin() {
                 <Select placeholder="Select department" allowClear showSearch optionFilterProp="label" options={departmentOptions} />
               </Form.Item>
 
-              <Form.Item
-                name="role"
-                label="Role"
-                rules={[{ required: true, message: 'Please select role' }]}
-              >
-                <Select placeholder="Select role" allowClear showSearch optionFilterProp="label" options={roleOptions} />
-              </Form.Item>
+              {isEditingSuperAdmin && isSuperAdmin ? (
+                <Form.Item name="role" label="Role" rules={[{ required: true }]}>
+                  <Select
+                    options={[
+                      { value: ADMIN_ROLE.SUPER_ADMIN, label: 'Super Admin' },
+                      { value: ADMIN_ROLE.ADMIN, label: 'Admin' },
+                    ]}
+                  />
+                </Form.Item>
+              ) : (
+                <Form.Item label="Role">
+                  <Tag color={admin.role === ADMIN_ROLE.SUPER_ADMIN ? 'gold' : 'blue'}>{admin.role}</Tag>
+                </Form.Item>
+              )}
 
               <Form.Item name="position" label="Position">
-                <Input placeholder="e.g. System Administrator" />
+                <Select placeholder="Select position" allowClear showSearch optionFilterProp="label" options={ADMIN_POSITION_OPTIONS} />
               </Form.Item>
 
               <Form.Item name="accountStatus" label="Account status">
@@ -147,13 +177,18 @@ export default function EditAdmin() {
           </Row>
 
           <Form.Item>
-            <Space>
+            <Space wrap>
               <Button type="primary" htmlType="submit">
                 Save changes
               </Button>
               <Button onClick={() => navigate(`/admins/${id}`)}>
                 Cancel
               </Button>
+              {canRemoveAdmin && (
+                <Button danger icon={<DeleteOutlined />} onClick={handleRemoveAdmin}>
+                  Remove admin
+                </Button>
+              )}
             </Space>
           </Form.Item>
         </Form>

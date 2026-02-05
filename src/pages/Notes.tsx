@@ -75,13 +75,13 @@ function previewContent(content: string | undefined | null, maxLen: number): str
 
 export default function Notes() {
   const { notes, addNote, updateNote, deleteNote } = useNotes()
-  const { currentAdmin } = useCurrentUser()
+  const { displayName } = useCurrentUser()
   const [modalOpen, setModalOpen] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [viewNote, setViewNote] = useState<Note | null>(null)
   const [form] = Form.useForm()
 
-  const authorName = currentAdmin ? `${currentAdmin.firstName} ${currentAdmin.lastName}`.trim() : 'User'
+  const authorName = displayName.trim() || 'User'
   const members = getMembersList()
   const notesList = Array.isArray(notes) ? notes : []
 
@@ -246,18 +246,26 @@ export default function Notes() {
         <>
           <Row gutter={[16, 16]}>
             {paginatedNotes.map((note) => (
-              <Col key={note.id} xs={24} sm={24} md={12} lg={8}>
+              <Col key={note.id} xs={24} sm={12} md={6} lg={6}>
                 <Card
                   size="small"
                   hoverable
                   onClick={() => openView(note)}
                   style={{ height: '100%', cursor: 'pointer' }}
-                  styles={{ body: { padding: 16 } }}
+                  styles={{
+                    body: {
+                      padding: 16,
+                      height: '100%',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      minHeight: 0,
+                    },
+                  }}
                 >
-                  <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', marginBottom: 12, color: 'rgba(0,0,0,0.85)' }}>
+                  <div style={{ flex: 1, minHeight: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word', color: 'rgba(0,0,0,0.85)' }}>
                     {previewContent(note.content, PREVIEW_LENGTH)}
                   </div>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
+                  <div style={{ marginTop: 'auto', paddingTop: 12, display: 'flex', flexWrap: 'wrap', gap: 12, borderTop: '1px solid #f0f0f0' }}>
                     <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                       <UserOutlined /> {note.author}
                     </Typography.Text>

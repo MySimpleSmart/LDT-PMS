@@ -1,18 +1,20 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { ConfigProvider } from 'antd'
+import { AuthProvider } from './context/AuthContext'
 import { CurrentUserProvider } from './context/CurrentUserContext'
 import { ProjectMetaProvider } from './context/ProjectMetaContext'
 import { TasksProvider } from './context/TasksContext'
 import { UnsavedChangesProvider } from './context/UnsavedChangesContext'
 import { NotesProvider } from './context/NotesContext'
 import AppLayout from './components/AppLayout'
+import ProtectedRoute from './components/ProtectedRoute'
+import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
 import Projects from './pages/Projects'
 import ProjectProfile from './pages/ProjectProfile'
 import NewProject from './pages/NewProject'
 import EditProject from './pages/EditProject'
-import ProjectCategories from './pages/ProjectCategories'
-import ProjectTags from './pages/ProjectTags'
+import ProjectCategoriesAndTags from './pages/ProjectCategoriesAndTags'
 import Tasks from './pages/Tasks'
 import NewTask from './pages/NewTask'
 import Members from './pages/Members'
@@ -26,8 +28,13 @@ import EditAdmin from './pages/EditAdmin'
 import Notes from './pages/Notes'
 import Files from './pages/Files'
 import Courses from './pages/Courses'
-import Settings from './pages/Settings'
+import { useCurrentUser } from './context/CurrentUserContext'
 import './App.css'
+
+function SettingsRedirect() {
+  const { profilePath } = useCurrentUser()
+  return <Navigate to={profilePath !== '/' ? profilePath : '/'} replace />
+}
 
 function App() {
   return (
@@ -40,18 +47,20 @@ function App() {
       }}
     >
       <BrowserRouter>
+        <AuthProvider>
         <NotesProvider>
         <CurrentUserProvider>
         <ProjectMetaProvider>
         <TasksProvider>
         <UnsavedChangesProvider>
         <Routes>
-          <Route path="/" element={<AppLayout />}>
+          <Route path="/login" element={<Login />} />
+          <Route path="/" element={<ProtectedRoute><AppLayout /></ProtectedRoute>}>
             <Route index element={<Dashboard />} />
             <Route path="projects" element={<Projects />} />
             <Route path="projects/new" element={<NewProject />} />
-            <Route path="projects/categories" element={<ProjectCategories />} />
-            <Route path="projects/tags" element={<ProjectTags />} />
+            <Route path="projects/categories" element={<ProjectCategoriesAndTags />} />
+            <Route path="projects/tags" element={<Navigate to="/projects/categories" replace state={{ tab: 'tags' }} />} />
             <Route path="projects/:id/edit" element={<EditProject />} />
             <Route path="projects/:id" element={<ProjectProfile />} />
             <Route path="tasks" element={<Tasks />} />
@@ -67,7 +76,7 @@ function App() {
             <Route path="notes" element={<Notes />} />
             <Route path="files" element={<Files />} />
             <Route path="courses" element={<Courses />} />
-            <Route path="settings" element={<Settings />} />
+            <Route path="settings" element={<SettingsRedirect />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>
         </Routes>
@@ -76,6 +85,7 @@ function App() {
         </ProjectMetaProvider>
         </CurrentUserProvider>
         </NotesProvider>
+        </AuthProvider>
       </BrowserRouter>
     </ConfigProvider>
   )

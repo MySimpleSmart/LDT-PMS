@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Typography,
@@ -18,24 +18,28 @@ import {
   message,
   Row,
   Col,
+  Segmented,
+  Empty,
+  Pagination,
 } from 'antd'
 import type { TabsProps } from 'antd'
-import { PlusOutlined, CheckSquareOutlined, UnorderedListOutlined, UserOutlined, EditOutlined, CommentOutlined, SearchOutlined, CheckCircleOutlined } from '@ant-design/icons'
+import { PlusOutlined, CheckSquareOutlined, UnorderedListOutlined, UserOutlined, EditOutlined, CommentOutlined, SearchOutlined, CheckCircleOutlined, CloseCircleOutlined, AppstoreOutlined } from '@ant-design/icons'
 import type { Dayjs } from 'dayjs'
 import dayjs from 'dayjs'
 import { useTasks } from '../context/TasksContext'
 import { useCurrentUser } from '../context/CurrentUserContext'
-import { getProjectsList } from '../data/projects'
-import { getProjectById } from '../data/projects'
+import { getProjectsList, getProjectById, getMemberIdsWhoAreProjectLeads } from '../data/projects'
+import { getTaskAssignees } from '../data/tasks'
 import type { Task } from '../types/task'
 
-// Status options for editing/creating tasks (no direct Completed here; use the button)
+// Only project lead (for that task’s project) or Admin/Super Admin can mark tasks as completed. Contributors cannot.
 const taskStatusOptionsForForm = [
   { value: 'To do', label: 'To do' },
   { value: 'In progress', label: 'In progress' },
+  { value: 'Pending completion', label: 'Pending completion' },
 ]
 
-// Status options for filtering in the Tasks list (include Completed so user can filter it)
+// Status options for filtering in the Tasks list
 const taskStatusFilterOptions = [
   ...taskStatusOptionsForForm,
   { value: 'Completed', label: 'Completed' },
@@ -58,11 +62,33 @@ function excerpt(text: string, max = 60) {
 export default function Tasks() {
   const navigate = useNavigate()
   const { tasks, getTaskById, updateTask, addTaskNote } = useTasks()
-  const { currentAdmin } = useCurrentUser()
+  const { currentAdminId, currentMember, isSuperAdmin, currentUserMemberId, displayName } = useCurrentUser()
+  const canConfirmRejectPending = (isSuperAdmin || currentAdminId) && !currentMember
+  const projects = getProjectsList()
+  const isProjectLead = Boolean(currentUserMemberId && getMemberIdsWhoAreProjectLeads().map((id) => id.toUpperCase()).includes(currentUserMemberId.toUpperCase()))
+  const showAddTask = isSuperAdmin || (currentAdminId && !currentMember) || isProjectLead
+
+  /** Project Lead may only edit/complete tasks in projects they lead (and that project’s member tasks). Not other projects. Super Admin/Admin may edit any task. */
+  const canEditTask = useCallback(
+    (t: Task) => {
+      if (isSuperAdmin) return true
+      if (currentAdminId && !currentMember) return true
+      if (!currentUserMemberId) return false
+      const projectRow = projects.find((p) => p.projectId === t.projectId)
+      const detail = projectRow ? getProjectById(projectRow.id) : null
+      const projectLeadMemberId = detail?.members.find((m) => m.role === 'Lead')?.memberId
+      return projectLeadMemberId === currentUserMemberId
+    },
+    [isSuperAdmin, currentAdminId, currentMember, currentUserMemberId, projects]
+  )
+
   const [activeTab, setActiveTab] = useState<string>('all')
   const [searchText, setSearchText] = useState('')
   const [statusFilter, setStatusFilter] = useState<string | null>(null)
   const [dateRange, setDateRange] = useState<[Dayjs | null, Dayjs | null] | null>(null)
+  const [viewMode, setViewMode] = useState<'list' | 'grid'>('list')
+  const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize, setPageSize] = useState(10)
   const [editDrawerOpen, setEditDrawerOpen] = useState(false)
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null)
   const [drawerTab, setDrawerTab] = useState('details')
@@ -70,7 +96,6 @@ export default function Tasks() {
   const [editForm] = Form.useForm()
 
   const task = selectedTaskId ? getTaskById(selectedTaskId) : undefined
-  const projects = getProjectsList()
   const projectOptions = projects.map((p) => ({ value: p.id, label: `${p.projectId} – ${p.projectName}` }))
   const selectedProjectId = Form.useWatch('projectId', editForm)
   const projectDetail = selectedProjectId ? getProjectById(selectedProjectId) : null
@@ -105,10 +130,10 @@ export default function Tasks() {
     if (currentStart !== originalStart) return true
     if (currentEnd !== originalEnd) return true
 
-    // Assignee
-    const currentAssignee = (values.assigneeMemberId as string | undefined) || undefined
-    const originalAssignee = task.assigneeMemberId || undefined
-    if (currentAssignee !== originalAssignee) return true
+    // Assignees (compare sorted member IDs)
+    const currentIds = ((values.assigneeMemberIds as string[] | undefined) || []).slice().sort()
+    const originalIds = getTaskAssignees(task).map((a) => a.memberId).sort()
+    if (currentIds.length !== originalIds.length || currentIds.some((id, i) => id !== originalIds[i])) return true
 
     return false
   }
@@ -116,13 +141,14 @@ export default function Tasks() {
   useEffect(() => {
     if (editDrawerOpen && task) {
       const projectRow = projects.find((p) => p.projectId === task.projectId)
+      const assignees = getTaskAssignees(task)
       editForm.setFieldsValue({
         projectId: projectRow?.id,
         taskName: task.taskName,
         status: task.status,
         startDate: task.startDate ? dayjs(task.startDate) : undefined,
         endDate: task.endDate ? dayjs(task.endDate) : undefined,
-        assigneeMemberId: task.assigneeMemberId,
+        assigneeMemberIds: assignees.map((a) => a.memberId),
       })
     }
   }, [editDrawerOpen, task, projects, editForm])
@@ -156,14 +182,21 @@ export default function Tasks() {
 
   const onFinishEdit = (values: Record<string, unknown>) => {
     if (!task) return
+    if (!canEditTask(task)) {
+      message.error('You can only edit and complete tasks in projects you lead.')
+      return
+    }
     const projectId = values.projectId as string
     const project = projectId ? getProjectById(projectId) : null
     if (!project) {
       message.error('Please select a project.')
       return
     }
-    const assigneeMemberId = values.assigneeMemberId as string | undefined
-    const member = assigneeMemberId ? project.members.find((m) => m.memberId === assigneeMemberId) : undefined
+    const memberIds = (values.assigneeMemberIds as string[] | undefined) || []
+    const assignees = memberIds
+      .map((mid) => project.members.find((m) => m.memberId === mid))
+      .filter(Boolean)
+      .map((m) => ({ memberId: m!.memberId, name: m!.name }))
     const start = values.startDate as { format?: (s: string) => string } | undefined
     const end = values.endDate as { format?: (s: string) => string } | undefined
     const updates = {
@@ -173,8 +206,7 @@ export default function Tasks() {
       status: (values.status as string) || 'To do',
       startDate: start?.format?.('YYYY-MM-DD'),
       endDate: end?.format?.('YYYY-MM-DD'),
-      assigneeMemberId: assigneeMemberId || undefined,
-      assigneeName: member?.name,
+      assignees: assignees.length ? assignees : undefined,
     }
 
     Modal.confirm({
@@ -191,15 +223,15 @@ export default function Tasks() {
 
   const onAddNote = () => {
     if (!task || !noteInput.trim()) return
-    const author = currentAdmin ? `${currentAdmin.firstName} ${currentAdmin.lastName}` : 'Current user'
+    const author = displayName || 'Current user'
     addTaskNote(task.id, { author, content: noteInput.trim(), createdAt: new Date().toISOString() })
     message.success('Note added.')
     setNoteInput('')
   }
 
-  const currentUserDisplayName = currentAdmin ? `${currentAdmin.firstName} ${currentAdmin.lastName}`.trim() : ''
+  const currentUserDisplayName = displayName.trim()
   const myTasks = currentUserDisplayName
-    ? tasks.filter((t) => t.assigneeName === currentUserDisplayName)
+    ? tasks.filter((t) => getTaskAssignees(t).some((a) => a.name === currentUserDisplayName))
     : []
 
   const baseTasks = activeTab === 'my' ? myTasks : tasks
@@ -212,7 +244,7 @@ export default function Tasks() {
           (t.taskName && t.taskName.toLowerCase().includes(q)) ||
           (t.projectName && t.projectName.toLowerCase().includes(q)) ||
           (t.projectId && t.projectId.toLowerCase().includes(q)) ||
-          (t.assigneeName && t.assigneeName.toLowerCase().includes(q))
+          getTaskAssignees(t).some((a) => a.name && a.name.toLowerCase().includes(q))
       )
     }
     if (statusFilter) {
@@ -229,8 +261,16 @@ export default function Tasks() {
         return true
       })
     }
-    return list
+    return [...list].sort((a, b) => {
+      const dateA = a.startDate ? dayjs(a.startDate).valueOf() : 0
+      const dateB = b.startDate ? dayjs(b.startDate).valueOf() : 0
+      return dateB - dateA
+    })
   }, [baseTasks, searchText, statusFilter, dateRange])
+
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [filteredTasks.length])
 
   const noteColumns = [
     { title: 'Author', dataIndex: 'author', key: 'author', width: 140 },
@@ -256,7 +296,22 @@ export default function Tasks() {
         return <Tag color={color}>{status}</Tag>
       },
     },
-    { title: 'Assignee', dataIndex: 'assigneeName', key: 'assignee', width: 160, render: (name: string) => name || '—' },
+    {
+      title: 'Assignees',
+      key: 'assignees',
+      width: 200,
+      render: (_: unknown, r: Task) => {
+        const assignees = getTaskAssignees(r)
+        if (!assignees.length) return '—'
+        return (
+          <Space size={4} wrap>
+            {assignees.map((a) => (
+              <Tag key={a.memberId}>{a.name}</Tag>
+            ))}
+          </Space>
+        )
+      },
+    },
     { title: 'Start Date', dataIndex: 'startDate', key: 'startDate', width: 110, render: (d: string) => d || '—' },
     { title: 'End Date', dataIndex: 'endDate', key: 'endDate', width: 110, render: (d: string) => d || '—' },
     {
@@ -280,16 +335,19 @@ export default function Tasks() {
         )
       },
     },
-    {
-      title: 'Action',
-      key: 'action',
-      width: 100,
-      render: (_: unknown, r: Task) => (
-        <Button type="link" size="small" icon={<EditOutlined />} onClick={() => openEditDrawer(r.id)}>
-          Edit
-        </Button>
-      ),
-    },
+    ...[
+      {
+        title: 'Action',
+        key: 'action',
+        width: 100,
+        render: (_: unknown, r: Task) =>
+          canEditTask(r) ? (
+            <Button type="link" size="small" icon={<EditOutlined />} onClick={() => openEditDrawer(r.id)}>
+              Edit
+            </Button>
+          ) : null,
+      },
+    ],
   ]
 
   const hasActiveFilters = Boolean(searchText || statusFilter || (dateRange && (dateRange[0] || dateRange[1])))
@@ -306,14 +364,14 @@ export default function Tasks() {
             allowClear
             style={{ width: 280 }}
           />
-            <Select
-              placeholder="Status"
-              allowClear
-              style={{ width: 140 }}
-              value={statusFilter ?? undefined}
-              onChange={(v) => setStatusFilter(v ?? null)}
-              options={taskStatusFilterOptions}
-            />
+          <Select
+            placeholder="Status"
+            allowClear
+            style={{ width: 140 }}
+            value={statusFilter ?? undefined}
+            onChange={(v) => setStatusFilter(v ?? null)}
+            options={taskStatusFilterOptions}
+          />
           <DatePicker.RangePicker
             placeholder={['Start date', 'End date']}
             value={dateRange}
@@ -332,9 +390,94 @@ export default function Tasks() {
             </Button>
           )}
         </Space>
+        <Segmented
+          value={viewMode}
+          onChange={(v) => setViewMode(v as 'list' | 'grid')}
+          options={[
+            { value: 'list', label: <span><UnorderedListOutlined /> List</span> },
+            { value: 'grid', label: <span><AppstoreOutlined /> Grid</span> },
+          ]}
+        />
       </div>
     </Card>
   )
+
+  const gridTasks = filteredTasks.slice((currentPage - 1) * pageSize, currentPage * pageSize)
+
+  const renderTaskGrid = (emptyText: string) =>
+    filteredTasks.length ? (
+      <>
+        <Row gutter={[16, 16]}>
+          {gridTasks.map((t) => {
+            const assignees = getTaskAssignees(t)
+            return (
+              <Col key={t.id} xs={24} sm={12} lg={8} xl={6}>
+                <Card
+                  hoverable={canEditTask(t)}
+                  onClick={canEditTask(t) ? () => openEditDrawer(t.id) : undefined}
+                  styles={{ body: { padding: 16 } }}
+                >
+                  <Space direction="vertical" size={8} style={{ width: '100%' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+                      <Typography.Text strong style={{ display: 'block', minWidth: 0 }} ellipsis={{ tooltip: t.taskName }}>
+                        {t.taskName}
+                      </Typography.Text>
+                      {canEditTask(t) && (
+                        <Button
+                          type="link"
+                          size="small"
+                          icon={<EditOutlined />}
+                          onClick={(e) => { e.stopPropagation(); openEditDrawer(t.id) }}
+                        >
+                          Edit
+                        </Button>
+                      )}
+                    </div>
+                    <Typography.Text type="secondary" style={{ display: 'block' }}>{t.projectName}</Typography.Text>
+                    <Tag color={t.status === 'Completed' ? 'green' : t.status === 'In progress' ? 'blue' : 'default'}>
+                      {t.status}
+                    </Tag>
+                    {assignees.length > 0 && (
+                      <Space size={4} wrap>
+                        {assignees.map((a) => (
+                          <Tag key={a.memberId}>{a.name}</Tag>
+                        ))}
+                      </Space>
+                    )}
+                    <Space size={12} style={{ color: 'rgba(0,0,0,0.65)' }} wrap>
+                      <Typography.Text type="secondary">Start: {t.startDate ?? '—'}</Typography.Text>
+                      <Typography.Text type="secondary">End: {t.endDate ?? '—'}</Typography.Text>
+                    </Space>
+                  </Space>
+                </Card>
+              </Col>
+            )
+          })}
+        </Row>
+        <Pagination
+          current={currentPage}
+          pageSize={pageSize}
+          total={filteredTasks.length}
+          showSizeChanger
+          pageSizeOptions={['10', '20', '50']}
+          showTotal={(total) => `Total ${total} items`}
+          onChange={(page, size) => {
+            setCurrentPage(page)
+            if (size) setPageSize(size)
+          }}
+          style={{ marginTop: 16, display: 'flex', justifyContent: 'flex-end' }}
+        />
+      </>
+    ) : (
+      <Card>
+        <Empty description={emptyText} />
+      </Card>
+    )
+
+  const allTasksEmptyText = hasActiveFilters ? 'No tasks match your filters.' : 'No tasks yet.'
+  const myTasksEmptyText = currentUserDisplayName
+    ? (hasActiveFilters ? 'No tasks assigned to you match your filters.' : 'No tasks assigned to you.')
+    : 'Log in to see your tasks.'
 
   const tabItems: TabsProps['items'] = [
     {
@@ -347,14 +490,29 @@ export default function Tasks() {
       children: (
         <>
           {filterCard}
-          <Table<Task>
-            rowKey="id"
-            dataSource={filteredTasks}
-            columns={columns}
-            size="small"
-            pagination={{ pageSize: 10, showSizeChanger: true }}
-            locale={{ emptyText: hasActiveFilters ? 'No tasks match your filters.' : 'No tasks yet.' }}
-          />
+          {viewMode === 'list' ? (
+            <Table<Task>
+              rowKey="id"
+              dataSource={filteredTasks}
+              columns={columns}
+              size="small"
+              pagination={{
+                current: currentPage,
+                pageSize,
+                total: filteredTasks.length,
+                showSizeChanger: true,
+                pageSizeOptions: ['10', '20', '50'],
+                showTotal: (total) => `Total ${total} items`,
+                onChange: (page, size) => {
+                  setCurrentPage(page)
+                  if (size) setPageSize(size)
+                },
+              }}
+              locale={{ emptyText: allTasksEmptyText }}
+            />
+          ) : (
+            renderTaskGrid(allTasksEmptyText)
+          )}
         </>
       ),
     },
@@ -373,18 +531,29 @@ export default function Tasks() {
               Tasks assigned to you ({currentUserDisplayName}).
             </Typography.Text>
           ) : null}
-          <Table<Task>
-            rowKey="id"
-            dataSource={filteredTasks}
-            columns={columns}
-            size="small"
-            pagination={{ pageSize: 10, showSizeChanger: true }}
-            locale={{
-              emptyText: currentUserDisplayName
-                ? (hasActiveFilters ? 'No tasks assigned to you match your filters.' : 'No tasks assigned to you.')
-                : 'Log in to see your tasks.',
-            }}
-          />
+          {viewMode === 'list' ? (
+            <Table<Task>
+              rowKey="id"
+              dataSource={filteredTasks}
+              columns={columns}
+              size="small"
+              pagination={{
+                current: currentPage,
+                pageSize,
+                total: filteredTasks.length,
+                showSizeChanger: true,
+                pageSizeOptions: ['10', '20', '50'],
+                showTotal: (total) => `Total ${total} items`,
+                onChange: (page, size) => {
+                  setCurrentPage(page)
+                  if (size) setPageSize(size)
+                },
+              }}
+              locale={{ emptyText: myTasksEmptyText }}
+            />
+          ) : (
+            renderTaskGrid(myTasksEmptyText)
+          )}
         </>
       ),
     },
@@ -401,9 +570,11 @@ export default function Tasks() {
             View and manage tasks. All Tasks or My Tasks (assigned to you).
           </Typography.Text>
         </div>
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => navigate('/tasks/new')}>
-          Add task
-        </Button>
+        {showAddTask && (
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => navigate('/tasks/new')}>
+            Add task
+          </Button>
+        )}
       </div>
 
       <Tabs activeKey={activeTab} onChange={setActiveTab} items={tabItems} />
@@ -419,7 +590,7 @@ export default function Tasks() {
           <>
             <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>
               {task.projectName} ({task.projectId}) · {task.status}
-              {task.assigneeName ? ` · ${task.assigneeName}` : ''}
+              {getTaskAssignees(task).length ? ` · ${getTaskAssignees(task).map((a) => a.name).join(', ')}` : ''}
             </Typography.Text>
             <Tabs
               activeKey={drawerTab}
@@ -435,54 +606,93 @@ export default function Tasks() {
                   children: (
                     <Form form={editForm} layout="vertical" onFinish={onFinishEdit}>
                       <Form.Item name="projectId" label="Related Project" rules={[{ required: true, message: 'Select a project' }]}>
-                        <Select placeholder="Select project" options={projectOptions} showSearch optionFilterProp="label" allowClear />
+                        <Select placeholder="Select project" options={projectOptions} showSearch optionFilterProp="label" allowClear disabled={task?.status === 'Completed' || (task?.status === 'Pending completion' && !canConfirmRejectPending)} />
                       </Form.Item>
                       <Form.Item name="taskName" label="Task Name" rules={[{ required: true, message: 'Enter task name' }]}>
-                        <Input placeholder="e.g. Setup API" />
+                        <Input placeholder="e.g. Setup API" disabled={task?.status === 'Completed' || (task?.status === 'Pending completion' && !canConfirmRejectPending)} />
                       </Form.Item>
                       <Form.Item name="status" label="Task Status">
-                        <Select options={taskStatusOptionsForForm} />
+                        <Select options={taskStatusOptionsForForm} disabled={task?.status === 'Completed' || (task?.status === 'Pending completion' && !canConfirmRejectPending)} />
                       </Form.Item>
                       <Row gutter={16}>
                         <Col span={12}>
                           <Form.Item name="startDate" label="Start Date">
-                            <DatePicker style={{ width: '100%' }} />
+                            <DatePicker style={{ width: '100%' }} disabled={task?.status === 'Completed' || (task?.status === 'Pending completion' && !canConfirmRejectPending)} />
                           </Form.Item>
                         </Col>
                         <Col span={12}>
                           <Form.Item name="endDate" label="End Date">
-                            <DatePicker style={{ width: '100%' }} />
+                            <DatePicker style={{ width: '100%' }} disabled={task?.status === 'Completed' || (task?.status === 'Pending completion' && !canConfirmRejectPending)} />
                           </Form.Item>
                         </Col>
                       </Row>
-                      <Form.Item name="assigneeMemberId" label="Assignee (project members only)">
+                      <Form.Item name="assigneeMemberIds" label="Assignees (project members)">
                         <Select
-                          placeholder={projectDetail ? 'Select assignee' : 'Select a project first'}
+                          mode="multiple"
+                          placeholder={projectDetail ? 'Select one or more assignees' : 'Select a project first'}
                           options={assigneeOptions}
                           showSearch
                           optionFilterProp="label"
-                          allowClear
-                          disabled={!projectDetail}
+                          disabled={!projectDetail || task?.status === 'Completed' || (task?.status === 'Pending completion' && !canConfirmRejectPending)}
                         />
                       </Form.Item>
                       <Form.Item>
                         <Space>
-                          <Button type="primary" htmlType="submit">
+                          <Button type="primary" htmlType="submit" disabled={task?.status === 'Completed' || (task?.status === 'Pending completion' && !canConfirmRejectPending)}>
                             Save changes
                           </Button>
-                          <Button
-                            type="default"
-                            icon={<CheckCircleOutlined />}
-                            style={{ borderColor: '#52c41a', color: '#52c41a' }}
-                            onClick={() => {
-                              if (!task) return
-                              editForm.setFieldsValue({ status: 'Completed' })
-                              const values = { ...editForm.getFieldsValue(), status: 'Completed' }
-                              onFinishEdit(values)
-                            }}
-                          >
-                            Mark as completed
-                          </Button>
+                          {task?.status === 'Pending completion' && canConfirmRejectPending ? (
+                            <Space>
+                              <Button
+                                type="primary"
+                                icon={<CheckCircleOutlined />}
+                                onClick={() => {
+                                  if (!task) return
+                                  editForm.setFieldsValue({ status: 'Completed' })
+                                  onFinishEdit({ ...editForm.getFieldsValue(), status: 'Completed' })
+                                  message.success('Task confirmed and marked as Completed.')
+                                }}
+                              >
+                                Confirm
+                              </Button>
+                              <Button
+                                danger
+                                icon={<CloseCircleOutlined />}
+                                onClick={() => {
+                                  if (!task) return
+                                  updateTask(task.id, { status: 'In progress' })
+                                  message.success('Task rejected. Status set back to In progress.')
+                                  setEditDrawerOpen(false)
+                                }}
+                              >
+                                Reject
+                              </Button>
+                            </Space>
+                          ) : (
+                            <Button
+                              type="default"
+                              icon={<CheckCircleOutlined />}
+                              style={
+                                task?.status === 'Completed' || task?.status === 'Pending completion'
+                                  ? { borderColor: '#d9d9d9', color: 'rgba(0,0,0,0.25)', cursor: 'not-allowed' }
+                                  : { borderColor: '#52c41a', color: '#52c41a' }
+                              }
+                              disabled={task?.status === 'Completed' || task?.status === 'Pending completion'}
+                              onClick={() => {
+                                if (!task || !canEditTask(task)) {
+                                  message.error('Only the project lead for this project can mark tasks as completed.')
+                                  return
+                                }
+                                const targetStatus = canConfirmRejectPending ? 'Completed' : 'Pending completion'
+                                editForm.setFieldsValue({ status: targetStatus })
+                                const values = { ...editForm.getFieldsValue(), status: targetStatus }
+                                onFinishEdit(values)
+                                if (targetStatus === 'Pending completion') message.success('Task sent for completion. An admin will review.')
+                              }}
+                            >
+                              {task?.status === 'Completed' ? 'Completed' : task?.status === 'Pending completion' ? 'Pending review' : 'Mark as completed'}
+                            </Button>
+                          )}
                         </Space>
                       </Form.Item>
                     </Form>

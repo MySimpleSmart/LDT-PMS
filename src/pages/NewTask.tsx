@@ -3,11 +3,21 @@ import { useNavigate } from 'react-router-dom'
 import { Card, Form, Input, Select, Button, Space, Typography, message, Row, Col, Modal, DatePicker } from 'antd'
 import { ArrowLeftOutlined } from '@ant-design/icons'
 import { useTasks } from '../context/TasksContext'
-import { getProjectsList } from '../data/projects'
-import { getProjectById } from '../data/projects'
+import { getProjectsList, getProjectById } from '../data/projects'
 import { useUnsavedChanges } from '../context/UnsavedChangesContext'
 import { useCurrentUser } from '../context/CurrentUserContext'
 import type { TaskNote } from '../types/task'
+
+function getProjectIdsWhereUserIsLead(memberId: string): string[] {
+  const list = getProjectsList()
+  const ids: string[] = []
+  for (const p of list) {
+    const detail = getProjectById(p.id)
+    const leadId = detail?.members.find((m) => m.role === 'Lead')?.memberId
+    if (leadId === memberId) ids.push(p.id)
+  }
+  return ids
+}
 
 const taskStatusOptions = [
   { value: 'To do', label: 'To do' },
@@ -18,8 +28,15 @@ export default function NewTask() {
   const navigate = useNavigate()
   const [form] = Form.useForm()
   const { addTask } = useTasks()
-  const { currentAdmin } = useCurrentUser()
+  const { displayName, isSuperAdmin, currentAdminId, currentMember, currentUserMemberId } = useCurrentUser()
   const { dirty, setDirty, confirmNavigation } = useUnsavedChanges()
+
+  const canAddTask = isSuperAdmin || (currentAdminId && !currentMember) || Boolean(currentUserMemberId && getProjectIdsWhereUserIsLead(currentUserMemberId).length)
+  const leadProjectIds = currentUserMemberId ? getProjectIdsWhereUserIsLead(currentUserMemberId) : []
+
+  useEffect(() => {
+    if (!canAddTask) navigate('/tasks', { replace: true })
+  }, [canAddTask, navigate])
 
   useEffect(() => {
     setDirty(false)
@@ -37,7 +54,10 @@ export default function NewTask() {
   }, [dirty])
 
   const projects = getProjectsList()
-  const projectOptions = projects.map((p) => ({ value: p.id, label: `${p.projectId} – ${p.projectName}` }))
+  const projectOptions = (currentMember && currentUserMemberId && leadProjectIds.length
+    ? projects.filter((p) => leadProjectIds.includes(p.id))
+    : projects
+  ).map((p) => ({ value: p.id, label: `${p.projectId} – ${p.projectName}` }))
 
   const selectedProjectId = Form.useWatch('projectId', form)
   const projectDetail = selectedProjectId ? getProjectById(selectedProjectId) : null
@@ -52,8 +72,15 @@ export default function NewTask() {
       message.error('Please select a project.')
       return
     }
-    const assigneeMemberId = values.assigneeMemberId as string | undefined
-    const member = assigneeMemberId ? project.members.find((m) => m.memberId === assigneeMemberId) : undefined
+    if (currentMember && currentUserMemberId && !leadProjectIds.includes(projectId)) {
+      message.error('You can only add tasks to projects you lead.')
+      return
+    }
+    const memberIds = (values.assigneeMemberIds as string[] | undefined) || []
+    const assignees = memberIds
+      .map((mid) => project.members.find((m) => m.memberId === mid))
+      .filter(Boolean)
+      .map((m) => ({ memberId: m!.memberId, name: m!.name }))
 
     const start = values.startDate as { format?: (s: string) => string } | undefined
     const end = values.endDate as { format?: (s: string) => string } | undefined
@@ -61,7 +88,7 @@ export default function NewTask() {
     const endDate = end?.format?.('YYYY-MM-DD')
 
     const initialNote = String(values.initialNote ?? '').trim()
-    const author = currentAdmin ? `${currentAdmin.firstName} ${currentAdmin.lastName}` : 'Current user'
+    const author = displayName || 'Current user'
     const notes: TaskNote[] = initialNote
       ? [{ key: `note-${Date.now()}`, author, content: initialNote, createdAt: new Date().toISOString() }]
       : []
@@ -73,10 +100,11 @@ export default function NewTask() {
       status: (values.status as string) || 'To do',
       startDate,
       endDate,
-      assigneeMemberId: assigneeMemberId || undefined,
-      assigneeName: member?.name,
+      assignees: assignees.length ? assignees : undefined,
       notes,
     }
+
+    const assigneeNames = assignees.map((a) => a.name).join(', ') || '—'
 
     Modal.confirm({
       title: 'Create this task?',
@@ -86,7 +114,7 @@ export default function NewTask() {
           <div><b>Task:</b> {payload.taskName}</div>
           <div><b>Status:</b> {payload.status}</div>
           <div><b>Start / End:</b> {(payload.startDate || '—')} → {(payload.endDate || '—')}</div>
-          <div><b>Assignee:</b> {payload.assigneeName ?? '—'}</div>
+          <div><b>Assignees:</b> {assigneeNames}</div>
           <div><b>Notes:</b> {notes.length ? 'Yes' : 'No'}</div>
         </div>
       ),
@@ -109,7 +137,7 @@ export default function NewTask() {
 
       <Card title="Add new task">
         <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>
-          Assignee must be a member of the selected project.
+          Assignees must be members of the selected project. You can select one or more.
         </Typography.Text>
 
         <Form form={form} layout="vertical" onFinish={onFinish} onValuesChange={() => setDirty(true)} initialValues={{ status: 'To do' }}>
@@ -146,13 +174,13 @@ export default function NewTask() {
               </Form.Item>
             </Col>
             <Col xs={24} md={12}>
-              <Form.Item name="assigneeMemberId" label="Assignee (project members only)">
+              <Form.Item name="assigneeMemberIds" label="Assignees (project members)" rules={[{ required: true, type: 'array', min: 1, message: 'Select at least one assignee' }]}>
                 <Select
-                  placeholder={projectDetail ? 'Select assignee' : 'Select a project first'}
+                  mode="multiple"
+                  placeholder={projectDetail ? 'Select one or more assignees' : 'Select a project first'}
                   options={assigneeOptions}
                   showSearch
                   optionFilterProp="label"
-                  allowClear
                   disabled={!projectDetail}
                 />
               </Form.Item>

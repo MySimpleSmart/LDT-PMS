@@ -1,12 +1,14 @@
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Typography, Table, Tag, Button, Space, Card, Input } from 'antd'
+import { useCurrentUser } from '../context/CurrentUserContext'
 import { EyeOutlined, PlusOutlined, SearchOutlined } from '@ant-design/icons'
 import MemberAvatar from '../components/MemberAvatar'
 import { getMembersTableList } from '../data/members'
 
 export default function Members() {
   const navigate = useNavigate()
+  const { isSuperAdmin } = useCurrentUser()
   const allMembers = getMembersTableList()
   const [searchText, setSearchText] = useState('')
 
@@ -18,7 +20,9 @@ export default function Members() {
       m.memberId.toLowerCase().includes(q) ||
       m.email.toLowerCase().includes(q) ||
       m.department.toLowerCase().includes(q) ||
-      m.role.toLowerCase().includes(q)
+      m.role.toLowerCase().includes(q) ||
+      (m.isProjectLead && 'project lead'.includes(q)) ||
+      (m.jobType && m.jobType.toLowerCase().includes(q))
     )
   }, [allMembers, searchText])
 
@@ -26,17 +30,21 @@ export default function Members() {
     {
       title: 'Member',
       key: 'member',
-      render: (_: unknown, r: (typeof members)[0]) => (
-        <Space>
-          <MemberAvatar profileImage={r.profileImage} firstName={r.firstName} lastName={r.lastName} size={32} />
-          <span>{r.fullName}</span>
+      render: (_: unknown, r: (typeof allMembers)[0]) => (
+        <Space wrap>
+          <Space>
+            <MemberAvatar profileImage={r.profileImage} firstName={r.firstName} lastName={r.lastName} size={32} />
+            <span>{r.fullName}</span>
+          </Space>
+          {r.isProjectLead && <Tag color="blue">Project Lead</Tag>}
         </Space>
       ),
     },
     { title: 'Member ID', dataIndex: 'memberId', key: 'memberId', width: 100 },
     { title: 'Email', dataIndex: 'email', key: 'email' },
     { title: 'Department', dataIndex: 'department', key: 'department' },
-    { title: 'Role', dataIndex: 'role', key: 'role' },
+    { title: 'Role', dataIndex: 'role', key: 'role', width: 100 },
+    { title: 'Job type', dataIndex: 'jobType', key: 'jobType', width: 120 },
     {
       title: 'Status',
       dataIndex: 'status',
@@ -48,7 +56,7 @@ export default function Members() {
       title: 'Action',
       key: 'action',
       width: 120,
-      render: (_: unknown, r: (typeof members)[0]) => (
+      render: (_: unknown, r: (typeof allMembers)[0]) => (
         <Button type="link" size="small" icon={<EyeOutlined />} onClick={() => navigate(`/members/${r.id}`)}>
           View profile
         </Button>
@@ -65,13 +73,15 @@ export default function Members() {
             Manage team members and roles.
           </Typography.Text>
         </div>
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => navigate('/members/new')}>
-          Add member
-        </Button>
+        {isSuperAdmin && (
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => navigate('/members/new')}>
+            Add member
+          </Button>
+        )}
       </div>
       <Card size="small" style={{ marginBottom: 16 }}>
         <Input
-          placeholder="Search by name, ID, email, department, or role..."
+          placeholder="Search by name, ID, email, department, role, or job type..."
           prefix={<SearchOutlined />}
           value={searchText}
           onChange={(e) => setSearchText(e.target.value)}

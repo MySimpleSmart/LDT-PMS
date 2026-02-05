@@ -1,7 +1,8 @@
 import { formatMemberId } from '../types/member'
 import { AVATAR_FILES, getAvatarUrl } from '../constants/avatars'
-import { getRelatedProjectsForMember } from './projects'
+import { getRelatedProjectsForMember, getMemberIdsWhoAreProjectLeads } from './projects'
 import { getRelatedTasksForMember } from './tasks'
+import { SYSTEM_ROLE } from '../constants/roles'
 
 export interface MemberDetail {
   memberId: string
@@ -12,7 +13,10 @@ export interface MemberDetail {
   email: string
   phone: string
   department: string
+  /** System role: Admin | Member (see constants/roles) */
   role: string
+  /** Job type e.g. Developer, Designer (for Members only) */
+  jobType?: string
   position: string
   relatedProjects: { key: string; name: string; role: string }[]
   relatedTasks: { key: string; title: string; status: string; project: string }[]
@@ -67,21 +71,26 @@ function parseMemberNum(id: string): number | null {
   return Number.isFinite(n) ? n : null
 }
 
-/** Super Admin id used when they are added as project lead/member or task assignee. */
+/** Admin (role) member id when assigned to projects/tasks. */
 export const SUPER_ADMIN_MEMBER_ID = 'ADA0001'
+/** Admin (Alex River) member id. */
+export const PROJECT_LEAD_MEMBER_ID = 'ADA0002'
 
-/** Profile path for a member (for mention links). LDA ids → /members/:num, ADA0001 → /admins/1. */
+/** Profile path for a member (for mention links). LDA ids → /members/:num, ADA0001 → /admins/1, etc. */
 export function getMemberProfilePath(memberId: string): string {
-  if (memberId.toUpperCase() === SUPER_ADMIN_MEMBER_ID) return '/admins/1'
+  const upper = memberId.toUpperCase()
+  if (upper === SUPER_ADMIN_MEMBER_ID) return '/admins/1'
+  if (upper === PROJECT_LEAD_MEMBER_ID) return '/admins/2'
   const num = parseMemberNum(memberId)
   return num != null ? `/members/${num}` : `/members/${memberId}`
 }
 
-/** Member id for the given admin (e.g. Super Admin → ADA0001). Used for My Projects / My Tasks. */
+/** Member id for the given user (Admin → ADA0001, ADA0002). Used for My Projects / My Tasks. */
 export function getMemberIdForAdminId(adminId: string | null): string | null {
   if (!adminId) return null
   const id = adminId.trim()
   if (id === '1' || id.toUpperCase() === 'ADA0001') return SUPER_ADMIN_MEMBER_ID
+  if (id === '2' || id.toUpperCase() === 'ADA0002') return PROJECT_LEAD_MEMBER_ID
   return null
 }
 
@@ -89,10 +98,11 @@ export function getMemberIdForAdminId(adminId: string | null): string | null {
 export function getMembersList(): { memberId: string; name: string }[] {
   const list = DEMO_MEMBERS.map((m) => ({ memberId: formatMemberId(m.num), name: fullName(m) }))
   list.push({ memberId: SUPER_ADMIN_MEMBER_ID, name: 'Sam Admin' })
+  list.push({ memberId: PROJECT_LEAD_MEMBER_ID, name: 'Alex River' })
   return list
 }
 
-/** List for Members table. Replace with Firebase. */
+/** List for Members table. System role is always Member; jobType = Developer/Designer etc. */
 export function getMembersTableList(): {
   id: string
   memberId: string
@@ -103,24 +113,65 @@ export function getMembersTableList(): {
   email: string
   department: string
   role: string
+  jobType: string
   status: 'Active' | 'Inactive'
+  isProjectLead: boolean
 }[] {
-  return DEMO_MEMBERS.map((m) => ({
-    id: String(m.num),
-    memberId: formatMemberId(m.num),
-    fullName: fullName(m),
-    firstName: m.firstName,
-    lastName: m.lastName,
-    profileImage: demoAvatarUrl(m.num),
-    email: m.email,
-    department: m.department,
-    role: m.role,
-    status: m.status,
-  }))
+  const projectLeadIds = new Set(getMemberIdsWhoAreProjectLeads().map((id) => id.toUpperCase()))
+  return DEMO_MEMBERS.map((m) => {
+    const memberId = formatMemberId(m.num)
+    return {
+      id: String(m.num),
+      memberId,
+      fullName: fullName(m),
+      firstName: m.firstName,
+      lastName: m.lastName,
+      profileImage: demoAvatarUrl(m.num),
+      email: m.email,
+      department: m.department,
+      role: SYSTEM_ROLE.MEMBER,
+      jobType: m.role,
+      status: m.status,
+      isProjectLead: projectLeadIds.has(memberId.toUpperCase()),
+    }
+  })
 }
 
 // Placeholder: replace with Firebase (getDoc from 'members' collection)
 export function getMemberById(id: string): MemberDetail | null {
+  const upper = id.trim().toUpperCase()
+  if (upper === SUPER_ADMIN_MEMBER_ID) {
+    return {
+      memberId: SUPER_ADMIN_MEMBER_ID,
+      accountStatus: 'Active',
+      profileImage: null,
+      firstName: 'Sam',
+      lastName: 'Admin',
+      email: 'sam.admin@company.com',
+      phone: '',
+      department: 'Admin',
+      role: SYSTEM_ROLE.ADMIN,
+      position: SYSTEM_ROLE.ADMIN,
+      relatedProjects: getRelatedProjectsForMember(SUPER_ADMIN_MEMBER_ID),
+      relatedTasks: getRelatedTasksForMember(SUPER_ADMIN_MEMBER_ID),
+    }
+  }
+  if (upper === PROJECT_LEAD_MEMBER_ID) {
+    return {
+      memberId: PROJECT_LEAD_MEMBER_ID,
+      accountStatus: 'Active',
+      profileImage: null,
+      firstName: 'Alex',
+      lastName: 'River',
+      email: 'alex.river@company.com',
+      phone: '',
+      department: 'Product',
+      role: SYSTEM_ROLE.MEMBER,
+      position: 'Project Manager',
+      relatedProjects: getRelatedProjectsForMember(PROJECT_LEAD_MEMBER_ID),
+      relatedTasks: getRelatedTasksForMember(PROJECT_LEAD_MEMBER_ID),
+    }
+  }
   const num = parseMemberNum(id) ?? 1
   const m = DEMO_MEMBERS.find((x) => x.num === num)
   if (!m) return null
@@ -133,7 +184,8 @@ export function getMemberById(id: string): MemberDetail | null {
     email: m.email,
     phone: m.phone,
     department: m.department,
-    role: m.role,
+    role: SYSTEM_ROLE.MEMBER,
+    jobType: m.role,
     position: m.position,
     relatedProjects: getRelatedProjectsForMember(formatMemberId(num)),
     relatedTasks: getRelatedTasksForMember(formatMemberId(num)),

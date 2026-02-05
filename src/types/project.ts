@@ -6,7 +6,7 @@ export function formatProjectId(num: number): string {
 export type ProjectCategory = 'Development' | 'Design' | 'Marketing' | 'Operations' | 'Research' | string
 export type ProjectTag = string
 export type Priority = 'Low' | 'Medium' | 'High' | 'Urgent'
-export type ProjectStatus = 'Not Started' | 'In Progress' | 'On Hold' | 'Completed'
+export type ProjectStatus = 'Not Started' | 'In Progress' | 'On Hold' | 'Pending completion' | 'Completed'
 
 export interface ProjectMember {
   key: string
@@ -29,13 +29,22 @@ export interface ProjectFile {
   uploadedAt: string
 }
 
+/** One assignee for a project task */
+export interface ProjectTaskAssignee {
+  memberId: string
+  name: string
+}
+
 /** Task status; 'Completed' counts toward progress */
 export interface ProjectTask {
   key: string
   title: string
   status: string
-  /** Member ID of assignee (must be a project member) */
+  /** Multiple assignees (project members) */
+  assignees?: ProjectTaskAssignee[]
+  /** @deprecated Use assignees */
   assigneeMemberId?: string
+  /** @deprecated Use assignees */
   assigneeName?: string
   startDate?: string
   endDate?: string

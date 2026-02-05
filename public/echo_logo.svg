@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="128" height="128" viewBox="0 0 33.867 33.867" id="shape">
+  <defs>
+    <linearGradient id="c">
+      <stop offset="0" stop-color="#f6f600"></stop>
+      <stop offset="1" stop-color="#f69134"></stop>
+    </linearGradient>
+    <linearGradient id="b">
+      <stop offset="0" stop-color="#0cc8ef"></stop>
+      <stop offset="1" stop-color="#047afa"></stop>
+    </linearGradient>
+    <linearGradient id="a">
+      <stop offset="0" stop-color="#ff7e3f"></stop>
+      <stop offset="1" stop-color="#ffbe3f"></stop>
+    </linearGradient>
+    <linearGradient xlink:href="#a" id="e" x1="1.058" x2="22.027" y1="11.542" y2="11.542" gradientTransform="rotate(-90 11.542 11.542)" gradientUnits="userSpaceOnUse"></linearGradient>
+    <linearGradient xlink:href="#b" id="d" x1="11.561" x2="32.808" y1="22.523" y2="22.523" gradientTransform="rotate(90 22.354 22.692)" gradientUnits="userSpaceOnUse"></linearGradient>
+    <linearGradient xlink:href="#c" id="f" x1="47.75" x2="73.727" y1="44.817" y2="70.317" gradientUnits="userSpaceOnUse"></linearGradient>
+  </defs>
+  <path fill="url(#d)" d="M32.808 14.545V30.5a2.64 2.64 0 0 1-2.645 2.646h-15.28a2.64 2.64 0 0 1-2.646-2.646V14.545a2.64 2.64 0 0 1 2.646-2.646h15.28a2.64 2.64 0 0 1 2.645 2.646z" paint-order="markers fill stroke"></path>
+  <path fill="url(#e)" d="M11.542 1.058a10.484 10.484 0 0 1 10.485 10.484 10.484 10.484 0 0 1-10.485 10.485A10.484 10.484 0 0 1 1.058 11.542 10.484 10.484 0 0 1 11.542 1.058Z" paint-order="markers fill stroke"></path>
+  <path fill="url(#f)" d="M56.25 44.973c-5.54 0-10 4.46-10 10v28.19a39.625 39.625 0 0 0 36.977-38.19H56.25z" paint-order="markers fill stroke" transform="scale(.26458)"></path>
+  <path fill="#024292" d="M12.997 29.899v.264h.53v-.264zm1.324 0v.264h.53v-.264zm1.323 0v.264h.529v-.264zm1.322 0v.264h.53v-.264zm1.324 0v.264h.53v-.264zm1.322 0v.264h.53v-.264zm1.323 0v.264h.53v-.264zm1.324 0v.264h.529v-.264zm1.322 0v.264h.53v-.264zm1.323 0v.264h.529v-.264zm1.324 0v.264h.529v-.264zm1.322 0v.264h.53v-.264zm1.322 0v.264h.53v-.264zm1.324 0v.264h.528v-.264zm1.323 0v.264h.529v-.264z" color="#000" font-family="sans-serif" font-weight="400" overflow="visible" paint-order="markers fill stroke" style="line-height:normal;font-variant-ligatures:normal;font-variant-position:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-alternates:normal;font-variant-east-asian:normal;font-feature-settings:normal;font-variation-settings:normal;text-indent:0;text-align:start;text-decoration-line:none;text-decoration-style:solid;text-decoration-color:#000;text-transform:none;text-orientation:mixed;shape-padding:0;shape-margin:0;inline-size:0;isolation:auto;mix-blend-mode:normal"></path>
+  <path fill="#e53b38" d="m13.768 10.295-.534.053.034.263.52-.052zm.802.004v.264h.53v-.264zm1.325 0v.264h.529v-.264zm1.322 0v.264h.53v-.264zm1.322 0v.264h.53v-.264zm1.324 0v.264h.53v-.264zm1.323 0v.264h.529v-.264zm-8.754.316-.457.278.142.222.447-.271zm-1.067.86-.297.455.229.13.283-.431zm-.601 1.234-.08.53.261.032.078-.515zm-.082 1.34v.53h.265v-.53zm0 1.324v.53h.265v-.53zm0 1.322v.53h.265v-.53zm0 1.323v.529h.265v-.53zm0 1.324v.53h.265v-.53zm0 1.322v.53h.265v-.53z" color="#000" font-family="sans-serif" font-weight="400" overflow="visible" paint-order="markers fill stroke" style="line-height:normal;font-variant-ligatures:normal;font-variant-position:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-alternates:normal;font-variant-east-asian:normal;font-feature-settings:normal;font-variation-settings:normal;text-indent:0;text-align:start;text-decoration-line:none;text-decoration-style:solid;text-decoration-color:#000;text-transform:none;text-orientation:mixed;shape-padding:0;shape-margin:0;inline-size:0;isolation:auto;mix-blend-mode:normal"></path>
+</svg>

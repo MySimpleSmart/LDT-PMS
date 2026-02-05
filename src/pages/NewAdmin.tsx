@@ -1,7 +1,11 @@
+import { useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Card, Form, Input, Select, Button, Space, Typography, message, Row, Col } from 'antd'
+import { Card, Form, Input, Select, Button, Space, Typography, Tag, message, Row, Col } from 'antd'
 import { ArrowLeftOutlined } from '@ant-design/icons'
 import AvatarPicker from '../components/AvatarPicker'
+import { ADMIN_POSITION_OPTIONS } from '../data/admins'
+import { useCurrentUser } from '../context/CurrentUserContext'
+import { ADMIN_ROLE } from '../constants/roles'
 
 const departmentOptions = [
   { value: 'Engineering', label: 'Engineering' },
@@ -11,19 +15,19 @@ const departmentOptions = [
   { value: 'Operations', label: 'Operations' },
 ]
 
-const roleOptions = [
-  { value: 'Super Admin', label: 'Super Admin' },
-  { value: 'Admin', label: 'Admin' },
-  { value: 'Manager', label: 'Manager' },
-]
-
 export default function NewAdmin() {
   const navigate = useNavigate()
+  const { isSuperAdmin } = useCurrentUser()
   const [form] = Form.useForm()
 
+  useEffect(() => {
+    if (!isSuperAdmin) navigate('/admins', { replace: true })
+  }, [isSuperAdmin, navigate])
+
   const onFinish = (values: Record<string, unknown>) => {
+    const payload = { ...values, role: ADMIN_ROLE.ADMIN }
     // TODO: Save to Firebase (e.g. addDoc to 'admins' collection)
-    console.log('New admin:', values)
+    console.log('New admin:', payload)
     message.success('Admin added successfully.')
     navigate('/admins')
   }
@@ -44,7 +48,7 @@ export default function NewAdmin() {
           form={form}
           layout="vertical"
           onFinish={onFinish}
-          initialValues={{ accountStatus: 'Active' }}
+          initialValues={{ accountStatus: 'Active', role: ADMIN_ROLE.ADMIN }}
         >
           <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>
             Admin ID will be assigned automatically (e.g. ADA0001).
@@ -96,16 +100,12 @@ export default function NewAdmin() {
                 <Select placeholder="Select department" allowClear showSearch optionFilterProp="label" options={departmentOptions} />
               </Form.Item>
 
-              <Form.Item
-                name="role"
-                label="Role"
-                rules={[{ required: true, message: 'Please select role' }]}
-              >
-                <Select placeholder="Select role" allowClear showSearch optionFilterProp="label" options={roleOptions} />
+              <Form.Item label="Role">
+                <Tag color="blue">{ADMIN_ROLE.ADMIN}</Tag>
               </Form.Item>
 
               <Form.Item name="position" label="Position">
-                <Input placeholder="e.g. System Administrator" />
+                <Select placeholder="Select position" allowClear showSearch optionFilterProp="label" options={ADMIN_POSITION_OPTIONS} />
               </Form.Item>
 
               <Form.Item name="accountStatus" label="Account status">

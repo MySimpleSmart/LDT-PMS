@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   Typography,
@@ -10,19 +11,65 @@ import {
   Table,
   Space,
   Tabs,
+  Timeline,
+  Form,
+  Input,
+  message,
 } from 'antd'
 import type { TabsProps } from 'antd'
-import { ArrowLeftOutlined, MailOutlined, PhoneOutlined, SettingOutlined, ProjectOutlined, CheckSquareOutlined, IdcardOutlined, EditOutlined, HistoryOutlined } from '@ant-design/icons'
+import { ArrowLeftOutlined, MailOutlined, PhoneOutlined, SettingOutlined, ProjectOutlined, CheckSquareOutlined, IdcardOutlined, EditOutlined, HistoryOutlined, LockOutlined } from '@ant-design/icons'
 
-import { getAdminById } from '../data/admins'
+import { getAdminById, isSuperAdminId } from '../data/admins'
+import { useCurrentUser } from '../context/CurrentUserContext'
+import { ADMIN_ROLE } from '../constants/roles'
 import MemberAvatar from '../components/MemberAvatar'
+
+type ActivityItem = { id: string; action: string; date: string }
+
+function getAdminActivityPlaceholder(adminId: string): ActivityItem[] {
+  return [
+    { id: '1', action: 'Logged in', date: new Date(Date.now() - 3600000).toISOString() },
+    { id: '2', action: 'Edited project Alpha', date: new Date(Date.now() - 86400000).toISOString() },
+    { id: '3', action: 'Created note "Sprint planning"', date: new Date(Date.now() - 172800000).toISOString() },
+    { id: '4', action: 'Profile updated', date: new Date(Date.now() - 259200000).toISOString() },
+  ]
+}
+
+function ActivityLogList({ activities }: { activities: ActivityItem[] }) {
+  if (!activities.length) {
+    return <Typography.Text type="secondary">No activity recorded yet.</Typography.Text>
+  }
+  return (
+    <Timeline
+      items={activities.map((a) => ({
+        key: a.id,
+        children: (
+          <>
+            <Typography.Text>{a.action}</Typography.Text>
+            <Typography.Text type="secondary" style={{ display: 'block', fontSize: 12 }}>
+              {new Date(a.date).toLocaleString()}
+            </Typography.Text>
+          </>
+        ),
+      }))}
+    />
+  )
+}
 
 export default function AdminProfile() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const { isSuperAdmin, currentAdminId } = useCurrentUser()
   const admin = id ? getAdminById(id) : null
+  const isOwnProfile = Boolean(id && currentAdminId && (id === currentAdminId || id === String(currentAdminId)))
+  const targetIsSuperAdmin = isSuperAdminId(id ?? '')
+  const canEditProfile = isSuperAdmin || (!targetIsSuperAdmin && currentAdminId) // Super Admin can edit any; Admin can edit Admin (not Super Admin)
+  const canSeeActivityAndSettings = isSuperAdmin || isOwnProfile
   const fullName = admin ? `${admin.firstName} ${admin.lastName}` : ''
-
+  const [adminPasswordForm] = Form.useForm()
+  const [adminEmailForm] = Form.useForm()
+  const [adminPasswordLoading, setAdminPasswordLoading] = useState(false)
+  const [adminEmailLoading, setAdminEmailLoading] = useState(false)
   if (!admin) {
     return (
       <div>
@@ -66,7 +113,9 @@ export default function AdminProfile() {
             <Card title="Department / Role / Position" size="small" style={{ flex: 1, width: '100%' }}>
               <Descriptions column={1} size="small">
                 <Descriptions.Item label="Department">{admin.department}</Descriptions.Item>
-                <Descriptions.Item label="Role">{admin.role}</Descriptions.Item>
+                <Descriptions.Item label="Role">
+                  <Tag color={admin.role === ADMIN_ROLE.SUPER_ADMIN ? 'gold' : 'blue'}>{admin.role}</Tag>
+                </Descriptions.Item>
                 <Descriptions.Item label="Position">{admin.position}</Descriptions.Item>
               </Descriptions>
             </Card>
@@ -106,32 +155,116 @@ export default function AdminProfile() {
         />
       ),
     },
-    {
-      key: 'activity',
-      label: (
-        <span>
-          <HistoryOutlined /> Activity log
-        </span>
-      ),
-      children: (
-        <Card size="small">
-          <Typography.Text type="secondary">Activity log for this admin — no entries yet.</Typography.Text>
-        </Card>
-      ),
-    },
-    {
-      key: 'settings',
-      label: (
-        <span>
-          <SettingOutlined /> Settings
-        </span>
-      ),
-      children: (
-        <Card size="small">
-          <Typography.Text type="secondary">Notification, privacy, and account settings — coming soon.</Typography.Text>
-        </Card>
-      ),
-    },
+    ...(canSeeActivityAndSettings
+      ? [
+          {
+            key: 'activity',
+            label: (
+              <span>
+                <HistoryOutlined /> Activity Log
+              </span>
+            ),
+            children: (
+              <Card size="small" title="Recent activity">
+                <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 12 }}>
+                  Recent actions and events for this admin. Connect to your backend to show real data.
+                </Typography.Text>
+                <ActivityLogList activities={getAdminActivityPlaceholder(admin.adminId)} />
+              </Card>
+            ),
+          },
+          {
+            key: 'settings',
+            label: (
+              <span>
+                <SettingOutlined /> Settings
+              </span>
+            ),
+            children: (isSuperAdmin || isOwnProfile) ? (
+              <>
+                <Card size="small" title={<Space><LockOutlined /> Change password</Space>} style={{ marginBottom: isSuperAdmin ? 16 : 0 }}>
+                  <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>
+                    {isOwnProfile ? 'Update your password.' : `Update password for this admin (${fullName}). Connect your backend to apply changes.`}
+                  </Typography.Text>
+                  <Form
+                    form={adminPasswordForm}
+                    layout="vertical"
+                    onFinish={(values: { newPassword: string; confirmPassword: string }) => {
+                      if (values.newPassword !== values.confirmPassword) {
+                        message.error('New passwords do not match.')
+                        return
+                      }
+                      setAdminPasswordLoading(true)
+                      Promise.resolve().then(() => {
+                        message.success('Password change requested for this admin. Connect your backend to complete.')
+                        adminPasswordForm.resetFields()
+                      }).finally(() => setAdminPasswordLoading(false))
+                    }}
+                    style={{ maxWidth: 400 }}
+                  >
+                    <Form.Item name="newPassword" label="New password" rules={[{ required: true, message: 'Enter a new password' }, { min: 6, message: 'At least 6 characters' }]}>
+                      <Input.Password prefix={<LockOutlined />} placeholder="New password" autoComplete="new-password" />
+                    </Form.Item>
+                    <Form.Item
+                      name="confirmPassword"
+                      label="Confirm new password"
+                      dependencies={['newPassword']}
+                      rules={[{ required: true, message: 'Confirm new password' }, ({ getFieldValue }) => ({ validator(_, value) { if (!value || getFieldValue('newPassword') === value) return Promise.resolve(); return Promise.reject(new Error('Passwords do not match')) } })]}
+                    >
+                      <Input.Password prefix={<LockOutlined />} placeholder="Confirm new password" autoComplete="new-password" />
+                    </Form.Item>
+                    <Form.Item>
+                      <Button type="primary" htmlType="submit" loading={adminPasswordLoading}>Change password</Button>
+                    </Form.Item>
+                  </Form>
+                </Card>
+                {isSuperAdmin && (
+                <Card size="small" title={<Space><MailOutlined /> Change email</Space>}>
+                  <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>
+                    Update email address for this admin ({fullName}). Connect your backend to apply changes.
+                  </Typography.Text>
+                  <Form
+                    form={adminEmailForm}
+                    layout="vertical"
+                    onFinish={(values: { newEmail: string; confirmEmail: string }) => {
+                      if (values.newEmail !== values.confirmEmail) {
+                        message.error('Email addresses do not match.')
+                        return
+                      }
+                      setAdminEmailLoading(true)
+                      Promise.resolve().then(() => {
+                        message.success('Email change requested for this admin. Connect your backend to complete.')
+                        adminEmailForm.resetFields()
+                      }).finally(() => setAdminEmailLoading(false))
+                    }}
+                    style={{ maxWidth: 400 }}
+                  >
+                    <Form.Item name="newEmail" label="New email" rules={[{ required: true, message: 'Enter new email' }, { type: 'email', message: 'Enter a valid email' }]}>
+                      <Input prefix={<MailOutlined />} placeholder="New email address" autoComplete="email" />
+                    </Form.Item>
+                    <Form.Item
+                      name="confirmEmail"
+                      label="Confirm new email"
+                      dependencies={['newEmail']}
+                      rules={[{ required: true, message: 'Confirm new email' }, ({ getFieldValue }) => ({ validator(_, value) { if (!value || getFieldValue('newEmail') === value) return Promise.resolve(); return Promise.reject(new Error('Emails do not match')) } })]}
+                    >
+                      <Input prefix={<MailOutlined />} placeholder="Confirm new email" autoComplete="email" />
+                    </Form.Item>
+                    <Form.Item>
+                      <Button type="primary" htmlType="submit" loading={adminEmailLoading}>Change email</Button>
+                    </Form.Item>
+                  </Form>
+                </Card>
+                )}
+              </>
+            ) : (
+              <Card size="small">
+                <Typography.Text type="secondary">Notification, privacy, and account settings — coming soon.</Typography.Text>
+              </Card>
+            ),
+          },
+        ]
+      : []),
   ]
 
   return (
@@ -144,9 +277,11 @@ export default function AdminProfile() {
         >
           Back to Admins
         </Button>
-        <Button type="primary" icon={<EditOutlined />} onClick={() => navigate(`/admins/${id}/edit`)}>
-          Edit profile
-        </Button>
+        {canEditProfile && (
+          <Button type="primary" icon={<EditOutlined />} onClick={() => navigate(`/admins/${id}/edit`)}>
+            Edit profile
+          </Button>
+        )}
       </div>
 
       <Card>

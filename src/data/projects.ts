@@ -10,7 +10,7 @@ export interface ProjectDetail {
   priority: 'Low' | 'Medium' | 'High' | 'Urgent'
   startDate: string
   endDate: string
-  status: 'Not Started' | 'In Progress' | 'On Hold' | 'Completed'
+  status: 'Not Started' | 'In Progress' | 'On Hold' | 'Pending completion' | 'Completed'
   progress: number
   tasks: ProjectTask[]
   members: ProjectMember[]
@@ -50,7 +50,7 @@ type DemoProjectSeed = {
   priority: 'Low' | 'Medium' | 'High' | 'Urgent'
   startDate: string
   endDate: string
-  status: 'Not Started' | 'In Progress' | 'On Hold' | 'Completed'
+  status: 'Not Started' | 'In Progress' | 'On Hold' | 'Pending completion' | 'Completed'
   tasks: ProjectTask[] // must be 4 tasks each
   members: ProjectMember[]
   notes: ProjectNote[]
@@ -72,15 +72,16 @@ const DEMO_PROJECTS: DemoProjectSeed[] = [
     status: 'In Progress',
     tasks: [
       { key: '1', title: 'Setup API', status: 'Completed', assigneeMemberId: 'LDA0001', assigneeName: 'Jane Doe', startDate: '2025-01-15', endDate: '2025-01-28' },
-      { key: '2', title: 'Auth module', status: 'In progress', assigneeMemberId: 'LDA0010', assigneeName: 'Daniel Nguyen', startDate: '2025-01-22', endDate: '2025-02-15' },
+      { key: '2', title: 'Auth module', status: 'In progress', assigneeMemberId: 'ADA0002', assigneeName: 'Alex River', startDate: '2025-01-22', endDate: '2025-02-15' },
       { key: '3', title: 'Deploy staging', status: 'To do', assigneeMemberId: 'LDA0009', assigneeName: 'Olivia Garcia', startDate: '2025-02-10', endDate: '2025-03-05' },
       { key: '4', title: 'Write docs', status: 'To do', assigneeMemberId: 'ADA0001', assigneeName: 'Sam Admin', startDate: '2025-03-01', endDate: '2025-03-31' },
     ],
     members: [
       { key: '1', memberId: 'ADA0001', name: 'Sam Admin', role: 'Lead' },
-      { key: '2', memberId: 'LDA0001', name: 'Jane Doe', role: 'Contributor' },
-      { key: '3', memberId: 'LDA0010', name: 'Daniel Nguyen', role: 'Contributor' },
-      { key: '4', memberId: 'LDA0009', name: 'Olivia Garcia', role: 'Contributor' },
+      { key: '2', memberId: 'ADA0002', name: 'Alex River', role: 'Contributor' },
+      { key: '3', memberId: 'LDA0001', name: 'Jane Doe', role: 'Contributor' },
+      { key: '4', memberId: 'LDA0010', name: 'Daniel Nguyen', role: 'Contributor' },
+      { key: '5', memberId: 'LDA0009', name: 'Olivia Garcia', role: 'Contributor' },
     ],
     notes: [{ key: '1', author: 'Sam Admin', content: 'Kickoff meeting completed.', createdAt: '2025-01-16T10:00:00' }],
     files: [{ key: '1', name: 'spec.pdf', size: '120 KB', uploadedAt: '2025-01-15' }],
@@ -99,15 +100,16 @@ const DEMO_PROJECTS: DemoProjectSeed[] = [
     status: 'In Progress',
     tasks: [
       { key: '1', title: 'Wireframes', status: 'Completed', assigneeMemberId: 'LDA0005', assigneeName: 'Mia Chen', startDate: '2025-02-01', endDate: '2025-02-18' },
-      { key: '2', title: 'Design system', status: 'In progress', assigneeMemberId: 'LDA0005', assigneeName: 'Mia Chen', startDate: '2025-02-14', endDate: '2025-03-20' },
+      { key: '2', title: 'Design system', status: 'In progress', assigneeMemberId: 'ADA0002', assigneeName: 'Alex River', startDate: '2025-02-14', endDate: '2025-03-20' },
       { key: '3', title: 'Hi‑fi mockups', status: 'To do', assigneeMemberId: 'LDA0011', assigneeName: 'Hana Ali', startDate: '2025-03-22', endDate: '2025-04-10' },
       { key: '4', title: 'Handoff to dev', status: 'To do', assigneeMemberId: 'ADA0001', assigneeName: 'Sam Admin', startDate: '2025-04-08', endDate: '2025-04-30' },
     ],
     members: [
-      { key: '1', memberId: 'ADA0001', name: 'Sam Admin', role: 'Lead' },
-      { key: '2', memberId: 'LDA0005', name: 'Mia Chen', role: 'Contributor' },
-      { key: '3', memberId: 'LDA0011', name: 'Hana Ali', role: 'Contributor' },
-      { key: '4', memberId: 'LDA0004', name: 'Leo Martinez', role: 'Contributor' },
+      { key: '1', memberId: 'LDA0005', name: 'Mia Chen', role: 'Lead' },
+      { key: '2', memberId: 'ADA0002', name: 'Alex River', role: 'Contributor' },
+      { key: '3', memberId: 'ADA0001', name: 'Sam Admin', role: 'Contributor' },
+      { key: '4', memberId: 'LDA0011', name: 'Hana Ali', role: 'Contributor' },
+      { key: '5', memberId: 'LDA0004', name: 'Leo Martinez', role: 'Contributor' },
     ],
     notes: [{ key: '1', author: 'Sam Admin', content: 'Homepage direction approved.', createdAt: '2025-02-05T15:20:00' }],
     files: [{ key: '1', name: 'wireframes.pdf', size: '340 KB', uploadedAt: '2025-02-02' }],
@@ -125,15 +127,16 @@ const DEMO_PROJECTS: DemoProjectSeed[] = [
     endDate: '2025-05-20',
     status: 'Not Started',
     tasks: [
-      { key: '1', title: 'Campaign brief', status: 'To do', assigneeMemberId: 'LDA0007', assigneeName: 'Sara Patel', startDate: '2025-03-05', endDate: '2025-03-22' },
+      { key: '1', title: 'Campaign brief', status: 'To do', assigneeMemberId: 'ADA0002', assigneeName: 'Alex River', startDate: '2025-03-05', endDate: '2025-03-22' },
       { key: '2', title: 'Landing page copy', status: 'To do', assigneeMemberId: 'LDA0007', assigneeName: 'Sara Patel', startDate: '2025-03-18', endDate: '2025-04-08' },
       { key: '3', title: 'Ad creatives', status: 'To do', assigneeMemberId: 'LDA0005', assigneeName: 'Mia Chen', startDate: '2025-04-01', endDate: '2025-04-25' },
       { key: '4', title: 'Launch checklist', status: 'To do', assigneeMemberId: 'LDA0006', assigneeName: 'Noah Wilson', startDate: '2025-05-05', endDate: '2025-05-20' },
     ],
     members: [
       { key: '1', memberId: 'LDA0007', name: 'Sara Patel', role: 'Lead' },
-      { key: '2', memberId: 'LDA0005', name: 'Mia Chen', role: 'Contributor' },
-      { key: '3', memberId: 'LDA0006', name: 'Noah Wilson', role: 'Contributor' },
+      { key: '2', memberId: 'ADA0002', name: 'Alex River', role: 'Contributor' },
+      { key: '3', memberId: 'LDA0005', name: 'Mia Chen', role: 'Contributor' },
+      { key: '4', memberId: 'LDA0006', name: 'Noah Wilson', role: 'Contributor' },
     ],
     notes: [{ key: '1', author: 'Sam Admin', content: 'Waiting on budget approval.', createdAt: '2025-03-02T09:00:00' }],
     files: [],
@@ -342,4 +345,18 @@ export function getRelatedProjectsForMember(memberId: string): { key: string; na
     }
   }
   return list
+}
+
+/** Member IDs that are project lead on at least one project. Used to list them on Admins page (role shown as Member). */
+export function getMemberIdsWhoAreProjectLeads(): string[] {
+  const leadIds = new Set<string>()
+  const list = getProjectsList()
+  for (const proj of list) {
+    const detail = getProjectById(proj.id)
+    if (!detail) continue
+    for (const m of detail.members) {
+      if (m.role === 'Lead') leadIds.add(m.memberId)
+    }
+  }
+  return Array.from(leadIds)
 }

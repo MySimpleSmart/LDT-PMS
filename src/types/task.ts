@@ -6,7 +6,13 @@ export interface TaskNote {
   createdAt: string
 }
 
-/** Standalone task with related project, assignee, and notes */
+/** One assignee entry for a task */
+export interface TaskAssignee {
+  memberId: string
+  name: string
+}
+
+/** Standalone task with related project, assignees, and notes */
 export interface Task {
   id: string
   projectId: string
@@ -15,7 +21,11 @@ export interface Task {
   status: string
   startDate?: string
   endDate?: string
+  /** Multiple assignees; preferred over legacy single fields */
+  assignees?: TaskAssignee[]
+  /** @deprecated Use assignees */
   assigneeMemberId?: string
+  /** @deprecated Use assignees */
   assigneeName?: string
   notes?: TaskNote[]
 }

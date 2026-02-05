@@ -1,32 +1,36 @@
 import { useNavigate } from 'react-router-dom'
 import { Typography, Table, Tag, Button, Space } from 'antd'
 import { EyeOutlined, PlusOutlined } from '@ant-design/icons'
-import { formatAdminId } from '../types/admin'
 import MemberAvatar from '../components/MemberAvatar'
-
-const placeholderAdmins = [
-  { id: '1', adminId: formatAdminId(1), fullName: 'Sam Admin', firstName: 'Sam', lastName: 'Admin', profileImage: null as string | null, email: 'sam.admin@company.com', department: 'Engineering', role: 'Super Admin', status: 'Active' as const },
-  { id: '2', adminId: formatAdminId(2), fullName: 'Alex River', firstName: 'Alex', lastName: 'River', profileImage: null as string | null, email: 'alex.river@company.com', department: 'Operations', role: 'Admin', status: 'Inactive' as const },
-]
+import { useCurrentUser } from '../context/CurrentUserContext'
+import { getAdminsList, type ProjectLeadRow } from '../data/admins'
 
 export default function Admins() {
   const navigate = useNavigate()
+  const { isSuperAdmin } = useCurrentUser()
+  const rows = getAdminsList()
 
   const columns = [
     {
-      title: 'Admin',
-      key: 'admin',
-      render: (_: unknown, r: (typeof placeholderAdmins)[0]) => (
+      title: 'Name',
+      key: 'name',
+      render: (_: unknown, r: ProjectLeadRow) => (
         <Space>
           <MemberAvatar profileImage={r.profileImage} firstName={r.firstName} lastName={r.lastName} size={32} />
           <span>{r.fullName}</span>
         </Space>
       ),
     },
-    { title: 'Admin ID', dataIndex: 'adminId', key: 'adminId', width: 100 },
+    { title: 'ID', dataIndex: 'memberId', key: 'memberId', width: 100 },
     { title: 'Email', dataIndex: 'email', key: 'email' },
     { title: 'Department', dataIndex: 'department', key: 'department' },
-    { title: 'Role', dataIndex: 'role', key: 'role' },
+    {
+      title: 'Role',
+      dataIndex: 'role',
+      key: 'role',
+      width: 120,
+      render: (role: string) => <Tag color={role === 'Super Admin' ? 'gold' : 'blue'}>{role}</Tag>,
+    },
     {
       title: 'Status',
       dataIndex: 'status',
@@ -38,8 +42,8 @@ export default function Admins() {
       title: 'Action',
       key: 'action',
       width: 120,
-      render: (_: unknown, r: (typeof placeholderAdmins)[0]) => (
-        <Button type="link" size="small" icon={<EyeOutlined />} onClick={() => navigate(`/admins/${r.id}`)}>
+      render: (_: unknown, r: ProjectLeadRow) => (
+        <Button type="link" size="small" icon={<EyeOutlined />} onClick={() => navigate(r.profilePath)}>
           View profile
         </Button>
       ),
@@ -52,16 +56,18 @@ export default function Admins() {
         <div>
           <Typography.Title level={3} style={{ marginBottom: 8 }}>Admins</Typography.Title>
           <Typography.Text type="secondary" style={{ display: 'block' }}>
-            Manage administrators and roles.
+            Super Admin (one only) and Admins. Super Admin can add/remove admins; Admin cannot edit Super Admin.
           </Typography.Text>
         </div>
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => navigate('/admins/new')}>
-          Add admin
-        </Button>
+        {isSuperAdmin && (
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => navigate('/admins/new')}>
+            Add admin
+          </Button>
+        )}
       </div>
       <Table
         rowKey="id"
-        dataSource={placeholderAdmins}
+        dataSource={rows}
         columns={columns}
         size="small"
         pagination={{ pageSize: 10 }}
