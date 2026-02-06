@@ -5,11 +5,13 @@ import {
   getDocs,
   doc,
   getDoc,
+  setDoc,
   updateDoc,
+  deleteDoc,
   type DocumentData,
 } from 'firebase/firestore'
 
-/** Progress is computed from tasks (done/total), not stored. */
+/** Progress is computed from tasks or from completedTasksCount/tasksCount when stored. */
 export interface ProjectDetail {
   projectId: string
   projectName: string
@@ -20,10 +22,14 @@ export interface ProjectDetail {
   endDate: string
   status: 'Not Started' | 'In Progress' | 'On Hold' | 'Pending completion' | 'Completed'
   progress: number
+  tasksCount: number
+  completedTasksCount: number
+  isArchived: boolean
   tasks: ProjectTask[]
   members: ProjectMember[]
   notes: ProjectNote[]
   files: ProjectFile[]
+  /** Creator: full name of the super admin, admin, or project lead who created the project. */
   createdBy: string
   createdAt: string
 }
@@ -38,7 +44,8 @@ function computeProgress(tasks: ProjectTask[]): number {
 
 /** Firestore document shape for a project. */
 interface ProjectDoc {
-  projectId: string
+  num?: number
+  projectId?: string
   projectName: string
   projectCategory: string
   projectTag: string
@@ -46,10 +53,14 @@ interface ProjectDoc {
   startDate: string
   endDate: string
   status: 'Not Started' | 'In Progress' | 'On Hold' | 'Pending completion' | 'Completed'
+  tasksCount?: number
+  completedTasksCount?: number
+  isArchived?: boolean
   tasks?: ProjectTask[]
   members?: ProjectMember[]
   notes?: ProjectNote[]
   files?: ProjectFile[]
+  /** Creator: full name of the super admin, admin, or project lead who created the project. */
   createdBy: string
   createdAt: string
 }
@@ -64,11 +75,14 @@ type ProjectCacheEntry = {
 let projectsCache: ProjectCacheEntry[] | null = null
 let cachePromise: Promise<void> | null = null
 
-function mapDocToProjectDetail(data: ProjectDoc): ProjectDetail {
+function mapDocToProjectDetail(data: ProjectDoc, fallbackIndex?: number): ProjectDetail {
   const tasks = data.tasks ?? []
-  const progress = computeProgress(tasks)
+  const tasksCount = data.tasksCount ?? tasks.length
+  const completedTasksCount = data.completedTasksCount ?? tasks.filter((t) => DONE_STATUSES.includes(t.status as (typeof DONE_STATUSES)[number])).length
+  const progress = tasksCount > 0 ? Math.round((completedTasksCount / tasksCount) * 100) : computeProgress(tasks)
+  const projectId = data.projectId ?? (data.num != null ? `LDP${String(data.num).padStart(4, '0')}` : (fallbackIndex != null ? `LDP${String(fallbackIndex).padStart(4, '0')}` : ''))
   return {
-    projectId: data.projectId,
+    projectId,
     projectName: data.projectName,
     projectCategory: data.projectCategory,
     projectTag: data.projectTag,
@@ -77,6 +91,9 @@ function mapDocToProjectDetail(data: ProjectDoc): ProjectDetail {
     endDate: data.endDate,
     status: data.status,
     progress,
+    tasksCount,
+    completedTasksCount,
+    isArchived: data.isArchived ?? false,
     tasks,
     members: data.members ?? [],
     notes: data.notes ?? [],
@@ -99,9 +116,10 @@ async function loadProjectsCache(force = false): Promise<void> {
   cachePromise = (async () => {
     const snap = await getDocs(colRef)
     const entries: ProjectCacheEntry[] = []
-    snap.forEach((docSnap) => {
+    const docs = snap.docs
+    docs.forEach((docSnap, i) => {
       const data = docSnap.data() as DocumentData
-      const detail = mapDocToProjectDetail(data as ProjectDoc)
+      const detail = mapDocToProjectDetail(data as ProjectDoc, i + 1)
       entries.push({ id: docSnap.id, detail })
     })
     projectsCache = entries
@@ -137,8 +155,18 @@ export type ProjectListRow = {
   priority: string
   status: string
   progress: number
+  tasksCount: number
+  completedTasksCount: number
+  isArchived: boolean
   startDate: string
   endDate: string
+}
+
+/** True when project has an end date in the past and is not Completed (display-only; not stored). */
+export function isProjectOverdue(project: { endDate: string; status: string }): boolean {
+  if (!project.endDate || project.status === 'Completed') return false
+  const today = new Date().toISOString().slice(0, 10)
+  return project.endDate < today
 }
 
 /** List for Projects table; progress is computed from tasks. */
@@ -153,6 +181,9 @@ export async function getProjectsList(): Promise<ProjectListRow[]> {
     priority: detail.priority,
     status: detail.status,
     progress: detail.progress,
+    tasksCount: detail.tasksCount,
+    completedTasksCount: detail.completedTasksCount,
+    isArchived: detail.isArchived,
     startDate: detail.startDate,
     endDate: detail.endDate,
   }))
@@ -183,6 +214,63 @@ export function getMemberIdsWhoAreProjectLeads(): string[] {
   return Array.from(leadIds)
 }
 
+/** Get next project ID (LDP0001, LDP0002, ...) from existing docs. */
+async function getNextProjectId(): Promise<string> {
+  const db = getDb()
+  const snap = await getDocs(collection(db, PROJECTS_COLLECTION))
+  let maxNum = 0
+  snap.forEach((d) => {
+    const m = d.id.match(/^LDP(\d+)$/i)
+    if (m) {
+      const n = parseInt(m[1], 10)
+      if (n > maxNum) maxNum = n
+    }
+  })
+  return `LDP${String(maxNum + 1).padStart(4, '0')}`
+}
+
+export type CreateProjectInput = {
+  projectName: string
+  projectCategory: string
+  projectTag: string
+  priority: 'Low' | 'Medium' | 'High' | 'Urgent'
+  startDate: string
+  endDate: string
+  status: string
+  members: ProjectMember[]
+  files?: ProjectFile[]
+  createdBy: string
+}
+
+/** Create a new project in Firestore. Returns the new project document id (e.g. LDP0001). */
+export async function createProject(input: CreateProjectInput): Promise<string> {
+  const db = getDb()
+  const projectId = await getNextProjectId()
+  const now = new Date().toISOString().slice(0, 10)
+  const data: ProjectDoc = {
+    projectName: input.projectName,
+    projectCategory: input.projectCategory,
+    projectTag: input.projectTag,
+    priority: input.priority,
+    startDate: input.startDate,
+    endDate: input.endDate,
+    status: input.status as ProjectDoc['status'],
+    tasksCount: 0,
+    completedTasksCount: 0,
+    isArchived: false,
+    tasks: [],
+    members: input.members,
+    notes: [],
+    files: input.files ?? [],
+    createdBy: input.createdBy,
+    createdAt: now,
+  }
+  const ref = doc(db, PROJECTS_COLLECTION, projectId)
+  await setDoc(ref, data as DocumentData)
+  await loadProjectsCache(true)
+  return projectId
+}
+
 /** Update an existing project in Firestore and refresh the cache. */
 export async function updateProjectById(id: string, updates: Partial<ProjectDetail>): Promise<void> {
   const db = getDb()
@@ -198,7 +286,14 @@ export async function updateProjectById(id: string, updates: Partial<ProjectDeta
   if (typeof updates.startDate !== 'undefined') updateData.startDate = updates.startDate
   if (typeof updates.endDate !== 'undefined') updateData.endDate = updates.endDate
   if (typeof updates.status !== 'undefined') updateData.status = updates.status
-  if (typeof updates.tasks !== 'undefined') updateData.tasks = updates.tasks
+  if (typeof updates.tasksCount !== 'undefined') updateData.tasksCount = updates.tasksCount
+  if (typeof updates.completedTasksCount !== 'undefined') updateData.completedTasksCount = updates.completedTasksCount
+  if (typeof updates.isArchived !== 'undefined') updateData.isArchived = updates.isArchived
+  if (typeof updates.tasks !== 'undefined') {
+    updateData.tasks = updates.tasks
+    updateData.tasksCount = updates.tasks.length
+    updateData.completedTasksCount = updates.tasks.filter((t) => DONE_STATUSES.includes(t.status as (typeof DONE_STATUSES)[number])).length
+  }
   if (typeof updates.members !== 'undefined') updateData.members = updates.members
   if (typeof updates.notes !== 'undefined') updateData.notes = updates.notes
   if (typeof updates.files !== 'undefined') updateData.files = updates.files
@@ -206,5 +301,13 @@ export async function updateProjectById(id: string, updates: Partial<ProjectDeta
   if (typeof updates.createdAt !== 'undefined') updateData.createdAt = updates.createdAt
 
   await updateDoc(ref, updateData as DocumentData)
+  await loadProjectsCache(true)
+}
+
+/** Delete a project from Firestore. Only call for Super Admin. */
+export async function deleteProject(id: string): Promise<void> {
+  const db = getDb()
+  const ref = doc(db, PROJECTS_COLLECTION, id.trim())
+  await deleteDoc(ref)
   await loadProjectsCache(true)
 }

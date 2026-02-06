@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   Typography,
@@ -19,7 +19,8 @@ import {
 import type { TabsProps } from 'antd'
 import { ArrowLeftOutlined, MailOutlined, PhoneOutlined, SettingOutlined, ProjectOutlined, CheckSquareOutlined, IdcardOutlined, EditOutlined, HistoryOutlined, LockOutlined } from '@ant-design/icons'
 
-import { getAdminById, isSuperAdminId } from '../data/admins'
+import { getAdminById } from '../data/admins'
+import type { AdminDetail } from '../data/admins'
 import { useCurrentUser } from '../context/CurrentUserContext'
 import { ADMIN_ROLE } from '../constants/roles'
 import MemberAvatar from '../components/MemberAvatar'
@@ -59,17 +60,43 @@ function ActivityLogList({ activities }: { activities: ActivityItem[] }) {
 export default function AdminProfile() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
-  const { isSuperAdmin, currentAdminId } = useCurrentUser()
-  const admin = id ? getAdminById(id) : null
-  const isOwnProfile = Boolean(id && currentAdminId && (id === currentAdminId || id === String(currentAdminId)))
-  const targetIsSuperAdmin = isSuperAdminId(id ?? '')
-  const canEditProfile = isSuperAdmin || (!targetIsSuperAdmin && currentAdminId) // Super Admin can edit any; Admin can edit Admin (not Super Admin)
+  const { isSuperAdmin, currentAdminId, currentUserMemberId } = useCurrentUser()
+  const [admin, setAdmin] = useState<AdminDetail | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    if (!id) {
+      setAdmin(null)
+      setLoading(false)
+      return
+    }
+    let active = true
+    getAdminById(id).then((a) => {
+      if (active) setAdmin(a)
+    }).finally(() => { if (active) setLoading(false) })
+    return () => { active = false }
+  }, [id])
+
+  const isOwnProfile = Boolean(id && currentUserMemberId && id === currentUserMemberId)
+  const targetIsSuperAdmin = admin?.role === ADMIN_ROLE.SUPER_ADMIN
+  const canEditProfile = isSuperAdmin || (!targetIsSuperAdmin && currentAdminId)
   const canSeeActivityAndSettings = isSuperAdmin || isOwnProfile
   const fullName = admin ? `${admin.firstName} ${admin.lastName}` : ''
   const [adminPasswordForm] = Form.useForm()
   const [adminEmailForm] = Form.useForm()
   const [adminPasswordLoading, setAdminPasswordLoading] = useState(false)
   const [adminEmailLoading, setAdminEmailLoading] = useState(false)
+
+  if (loading) {
+    return (
+      <div>
+        <Button type="text" icon={<ArrowLeftOutlined />} onClick={() => navigate('/admins')}>
+          Back to Admins
+        </Button>
+        <Typography.Text type="secondary">Loading…</Typography.Text>
+      </div>
+    )
+  }
   if (!admin) {
     return (
       <div>

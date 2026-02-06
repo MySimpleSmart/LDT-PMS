@@ -13,7 +13,7 @@ import {
 } from '@ant-design/icons'
 import { useNotes } from '../context/NotesContext'
 import { useCurrentUser } from '../context/CurrentUserContext'
-import { getProjectsList, type ProjectListRow } from '../data/projects'
+import { getProjectsList, isProjectOverdue, type ProjectListRow } from '../data/projects'
 import { getMembersList } from '../data/members'
 import { flattenTasksFromProjects } from '../data/tasks'
 import type { Task } from '../types/task'
@@ -44,18 +44,21 @@ export default function Dashboard() {
 
   const [projects, setProjects] = useState<ProjectListRow[]>([])
   const [tasks, setTasks] = useState<Task[]>([])
+  const [membersList, setMembersList] = useState<{ memberId: string; name: string }[]>([])
 
   useEffect(() => {
     let active = true
     ;(async () => {
       try {
-        const [projectRows, flattenedTasks] = await Promise.all([
+        const [projectRows, flattenedTasks, members] = await Promise.all([
           getProjectsList(),
           flattenTasksFromProjects(),
+          getMembersList(),
         ])
         if (!active) return
         setProjects(projectRows)
         setTasks(flattenedTasks)
+        setMembersList(members)
       } catch (err) {
         // eslint-disable-next-line no-console
         console.error('Failed to load dashboard data', err)
@@ -65,7 +68,7 @@ export default function Dashboard() {
       active = false
     }
   }, [])
-  const membersCount = useMemo(() => getMembersList().length, [])
+  const membersCount = membersList.length
   const activeProjectsCount = useMemo(() => projects.filter((p) => p.status === 'In Progress').length, [projects])
 
   const recentNotes = useMemo(() => (Array.isArray(notes) ? notes : []).slice(0, 10), [notes])
@@ -185,9 +188,10 @@ export default function Dashboard() {
                   >
                     <List.Item.Meta
                       title={
-                        <Space size={8}>
+                        <Space size={8} wrap>
                           <span>{p.projectName}</span>
                           <Tag color={p.status === 'Completed' ? 'green' : 'default'}>{p.status}</Tag>
+                          {isProjectOverdue(p) && <Tag color="red">Overdue</Tag>}
                         </Space>
                       }
                       description={

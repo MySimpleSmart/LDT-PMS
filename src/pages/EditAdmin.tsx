@@ -1,8 +1,9 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { Card, Form, Input, Select, Button, Space, Typography, Tag, message, Row, Col, Modal } from 'antd'
+import { Card, Form, Input, Select, Button, Space, Typography, Tag, message, Row, Col, Modal, Spin } from 'antd'
 import { ArrowLeftOutlined, DeleteOutlined } from '@ant-design/icons'
-import { getAdminById, ADMIN_POSITION_OPTIONS, isSuperAdminId } from '../data/admins'
+import { getAdminById, ADMIN_POSITION_OPTIONS } from '../data/admins'
+import type { AdminDetail } from '../data/admins'
 import { useCurrentUser } from '../context/CurrentUserContext'
 import { ADMIN_ROLE } from '../constants/roles'
 import AvatarPicker from '../components/AvatarPicker'
@@ -20,12 +21,27 @@ export default function EditAdmin() {
   const navigate = useNavigate()
   const { isSuperAdmin, currentAdminId } = useCurrentUser()
   const [form] = Form.useForm()
-  const admin = id ? getAdminById(id) : null
-  const isEditingSuperAdmin = isSuperAdminId(id)
+  const [admin, setAdmin] = useState<AdminDetail | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    if (!id) {
+      setAdmin(null)
+      setLoading(false)
+      return
+    }
+    let active = true
+    getAdminById(id).then((a) => {
+      if (active) setAdmin(a)
+    }).finally(() => { if (active) setLoading(false) })
+    return () => { active = false }
+  }, [id])
+
+  const isEditingSuperAdmin = admin?.role === ADMIN_ROLE.SUPER_ADMIN
   const canEdit = isSuperAdmin
     ? true
-    : !isEditingSuperAdmin && currentAdminId // Admin can edit other Admins, not Super Admin
-  const canRemoveAdmin = isSuperAdmin && !isEditingSuperAdmin // Super Admin can remove Admin, not Super Admin
+    : !isEditingSuperAdmin && currentAdminId
+  const canRemoveAdmin = isSuperAdmin && !isEditingSuperAdmin
 
   const handleRemoveAdmin = () => {
     Modal.confirm({
@@ -43,8 +59,8 @@ export default function EditAdmin() {
   }
 
   useEffect(() => {
-    if (!canEdit) navigate('/admins', { replace: true })
-  }, [canEdit, navigate])
+    if (!loading && admin !== null && !canEdit) navigate('/admins', { replace: true })
+  }, [admin, canEdit, loading, navigate])
 
   useEffect(() => {
     if (admin) {
@@ -71,6 +87,17 @@ export default function EditAdmin() {
     navigate(`/admins/${id}`)
   }
 
+  if (loading) {
+    return (
+      <div>
+        <Button type="text" icon={<ArrowLeftOutlined />} onClick={() => navigate('/admins')}>
+          Back to Admins
+        </Button>
+        <Typography.Text type="secondary">Loading…</Typography.Text>
+        <Spin style={{ marginTop: 16 }} />
+      </div>
+    )
+  }
   if (!id || !admin) {
     return (
       <div>

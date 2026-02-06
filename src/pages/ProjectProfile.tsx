@@ -19,12 +19,14 @@ import {
   message,
   Modal,
   Upload,
+  Tooltip,
+  Divider,
 } from 'antd'
 import type { TabsProps } from 'antd'
-import { ArrowLeftOutlined, EditOutlined, TeamOutlined, CommentOutlined, FileOutlined, CalendarOutlined, UserOutlined, CheckSquareOutlined, PlusOutlined, UserAddOutlined, DeleteOutlined, UploadOutlined, CheckCircleOutlined, CloseCircleOutlined, AppstoreOutlined } from '@ant-design/icons'
+import { ArrowLeftOutlined, EditOutlined, TeamOutlined, CommentOutlined, FileOutlined, CalendarOutlined, UserOutlined, CheckSquareOutlined, PlusOutlined, UserAddOutlined, DeleteOutlined, UploadOutlined, CheckCircleOutlined, CloseCircleOutlined, AppstoreOutlined, InboxOutlined, CrownOutlined, AuditOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
 
-import { getProjectById, updateProjectById, type ProjectDetail } from '../data/projects'
+import { getProjectById, updateProjectById, deleteProject, isProjectOverdue, type ProjectDetail } from '../data/projects'
 import { getMembersList } from '../data/members'
 import { getTaskAssignees } from '../data/tasks'
 import { useCurrentUser } from '../context/CurrentUserContext'
@@ -75,10 +77,12 @@ const statusOptionsWithCompleted = [...statusOptionsBase, { value: 'Completed', 
 const projectRoleOptions = [
   { value: 'Lead', label: 'Lead' },
   { value: 'Contributor', label: 'Contributor' },
-  { value: 'Viewer', label: 'Viewer' },
-  { value: 'Manager', label: 'Manager' },
-  { value: 'Developer', label: 'Developer' },
-  { value: 'Designer', label: 'Designer' },
+  { value: 'Moderator', label: 'Moderator' },
+]
+/** When adding a new member, only Contributor or Moderator (project has one lead; set lead from Members table). */
+const addMemberRoleOptions = [
+  { value: 'Contributor', label: 'Contributor' },
+  { value: 'Moderator', label: 'Moderator' },
 ]
 
 export default function ProjectProfile() {
@@ -142,6 +146,11 @@ export default function ProjectProfile() {
   const [addMemberForm] = Form.useForm()
   const [addTaskForm] = Form.useForm()
   const commentTextareaRef = useRef<HTMLTextAreaElement>(null)
+  const [allMembers, setAllMembers] = useState<{ memberId: string; name: string }[]>([])
+
+  useEffect(() => {
+    getMembersList().then(setAllMembers).catch(() => setAllMembers([]))
+  }, [])
 
   const categoryOptions = categories.map((c) => ({ value: c, label: c }))
   const tagOptions = tags.map((t) => ({ value: t, label: t }))
@@ -277,6 +286,21 @@ export default function ProjectProfile() {
     setProjectVersion((v) => v + 1)
   }
 
+  const archiveProject = () => {
+    if (!id) return
+    Modal.confirm({
+      title: 'Archive project?',
+      content: 'Archived projects are hidden from the main list. Only Super Admin can archive. You can still open this project from "Show archived".',
+      okText: 'Archive',
+      cancelText: 'Cancel',
+      onOk: async () => {
+        await updateProjectById(id, { isArchived: true })
+        message.success('Project archived.')
+        setProjectVersion((v) => v + 1)
+      },
+    })
+  }
+
   const closeProjectEditDrawer = () => {
     if (!editDrawerDirty) {
       setEditDrawerOpen(false)
@@ -332,7 +356,6 @@ export default function ProjectProfile() {
   ]
 
   const onAddMember = (values: { memberId: string; role: string }) => {
-    const allMembers = getMembersList()
     const chosen = allMembers.find((m) => m.memberId === values.memberId)
     if (!chosen) return
     const newRole = values.role || 'Contributor'
@@ -349,7 +372,7 @@ export default function ProjectProfile() {
     setAddMemberModalOpen(false)
   }
 
-  const onSetProjectRole = (record: ProjectMember, newRole: 'Lead' | 'Contributor') => {
+  const onSetProjectRole = (record: ProjectMember, newRole: 'Lead' | 'Contributor' | 'Moderator') => {
     if (newRole === 'Lead') {
       const currentLead = effectiveMembers.find((m) => m.role === 'Lead')
       setLeadRoleOverrides((prev) => ({
@@ -359,12 +382,17 @@ export default function ProjectProfile() {
       }))
       message.success(`${record.name} is now Project Lead.${currentLead && currentLead.memberId !== record.memberId ? ` ${currentLead.name} is now Contributor.` : ''}`)
     } else {
-      setLeadRoleOverrides((prev) => ({ ...prev, [record.memberId]: 'Contributor' }))
-      message.success(`${record.name} is now Contributor. You can set another member as Project Lead.`)
+      setLeadRoleOverrides((prev) => ({ ...prev, [record.memberId]: newRole }))
+      message.success(`${record.name} is now ${newRole}.`)
     }
   }
 
   const onRemoveMember = (record: ProjectMember, isLocal: boolean) => {
+    const effectiveRole = leadRoleOverrides[record.memberId] ?? record.role
+    if (effectiveRole === 'Lead') {
+      message.warning('Cannot remove the project lead. Set another member as project lead first.')
+      return
+    }
     Modal.confirm({
       title: 'Remove member from project?',
       content: `${record.name} (${record.memberId}) will be removed from this project.`,
@@ -454,27 +482,38 @@ export default function ProjectProfile() {
           {
             title: 'Action',
             key: 'action',
-            width: 220,
+            width: 120,
             render: (_: unknown, record: ProjectMember) => {
               const isLead = record.role === 'Lead'
               return (
                 <Space size={4} wrap>
-                    <Button
-                      type="link"
-                      size="small"
-                      onClick={() => onSetProjectRole(record, isLead ? 'Contributor' : 'Lead')}
-                    >
-                      {isLead ? 'Set as Contributor' : 'Set as Lead'}
-                    </Button>
-                    <Button
-                      type="link"
-                      danger
-                      size="small"
-                      icon={<DeleteOutlined />}
-                      onClick={() => onRemoveMember(record, localMembers.some((m) => m.memberId === record.memberId))}
-                    >
-                      Remove
-                    </Button>
+                    {record.role !== 'Lead' && (
+                      <Tooltip title="Set as Lead">
+                        <Button type="link" size="small" icon={<CrownOutlined />} onClick={() => onSetProjectRole(record, 'Lead')} />
+                      </Tooltip>
+                    )}
+                    {record.role === 'Moderator' && (
+                      <Tooltip title="Set as Contributor">
+                        <Button type="link" size="small" icon={<EditOutlined />} onClick={() => onSetProjectRole(record, 'Contributor')} />
+                      </Tooltip>
+                    )}
+                    {record.role === 'Contributor' && (
+                      <Tooltip title="Set as Moderator">
+                        <Button type="link" size="small" icon={<AuditOutlined />} onClick={() => onSetProjectRole(record, 'Moderator')} />
+                      </Tooltip>
+                    )}
+                    <Tooltip title={isLead ? 'Set another member as project lead first.' : 'Remove from project'}>
+                      <span>
+                        <Button
+                          type="link"
+                          danger
+                          size="small"
+                          icon={<DeleteOutlined />}
+                          disabled={isLead}
+                          onClick={() => onRemoveMember(record, localMembers.some((m) => m.memberId === record.memberId))}
+                        />
+                      </span>
+                    </Tooltip>
                   </Space>
               )
             },
@@ -557,6 +596,18 @@ export default function ProjectProfile() {
               </Card>
             </Col>
           )}
+          {project.status === 'Completed' && isSuperAdmin && !project.isArchived && (
+            <Col span={24}>
+              <Card size="small" title="Archive project">
+                <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 12 }}>
+                  Only Super Admin can archive. Archived projects are hidden from the main Projects list.
+                </Typography.Text>
+                <Button icon={<InboxOutlined />} onClick={archiveProject}>
+                  Archive project
+                </Button>
+              </Card>
+            </Col>
+          )}
           <Col span={24}>
             <Card size="small">
               <Row gutter={[24, 16]}>
@@ -592,7 +643,12 @@ export default function ProjectProfile() {
                 </Col>
                 <Col xs={24} md={12}>
                   <Typography.Text type="secondary">Status</Typography.Text>
-                  <div><Tag color={statusTagColor(project.status)}>{project.status}</Tag></div>
+                  <div>
+                    <Space size={4} wrap>
+                      <Tag color={statusTagColor(project.status)}>{project.status}</Tag>
+                      {isProjectOverdue(project) && <Tag color="red">Overdue</Tag>}
+                    </Space>
+                  </div>
                 </Col>
                 <Col xs={24} md={12}>
                   <Typography.Text type="secondary"><CalendarOutlined /> Start Date</Typography.Text>
@@ -601,6 +657,14 @@ export default function ProjectProfile() {
                 <Col xs={24} md={12}>
                   <Typography.Text type="secondary"><CalendarOutlined /> End Date</Typography.Text>
                   <div>{formatDate(project.endDate)}</div>
+                </Col>
+                <Col xs={24} md={12}>
+                  <Typography.Text type="secondary">Tasks (stored)</Typography.Text>
+                  <div>{project.completedTasksCount} / {project.tasksCount} completed</div>
+                </Col>
+                <Col xs={24} md={12}>
+                  <Typography.Text type="secondary">Archived</Typography.Text>
+                  <div>{project.isArchived ? <Tag>Archived</Tag> : 'No'}</div>
                 </Col>
                 <Col xs={24}>
                   <Typography.Text type="secondary">Progress (from tasks)</Typography.Text>
@@ -799,6 +863,7 @@ export default function ProjectProfile() {
           <Typography.Text type="secondary">Project ID: {project.projectId}</Typography.Text>
           <Tag color={priorityColors[project.priority] || 'default'}>{project.priority}</Tag>
           <Tag color={statusTagColor(project.status)}>{project.status}</Tag>
+          {isProjectOverdue(project) && <Tag color="red">Overdue</Tag>}
           <Space size={4} align="center">
             <Typography.Text type="secondary" style={{ whiteSpace: 'nowrap' }}>Progress</Typography.Text>
             <Progress percent={effectiveProgress} size="small" showInfo style={{ marginBottom: 0, minWidth: 80, width: 80 }} />
@@ -815,14 +880,14 @@ export default function ProjectProfile() {
         footer={null}
         destroyOnClose
       >
-        {getMembersList().filter((m) => !effectiveMembers.some((pm) => pm.memberId === m.memberId)).length === 0 ? (
+        {allMembers.filter((m) => !effectiveMembers.some((pm) => pm.memberId === m.memberId)).length === 0 ? (
           <Typography.Text type="secondary">All members are already in this project. Add new members from the Members page first.</Typography.Text>
         ) : (
         <Form form={addMemberForm} layout="vertical" onFinish={onAddMember}>
           <Form.Item name="memberId" label="Member" rules={[{ required: true, message: 'Select a member' }]}>
             <Select
               placeholder="Select member to add"
-              options={getMembersList()
+              options={allMembers
                 .filter((m) => !effectiveMembers.some((pm) => pm.memberId === m.memberId))
                 .map((m) => ({ value: m.memberId, label: m.name }))}
               showSearch
@@ -830,7 +895,7 @@ export default function ProjectProfile() {
             />
           </Form.Item>
           <Form.Item name="role" label="Role in project" initialValue="Contributor">
-            <Select placeholder="Select role" options={projectRoleOptions} />
+            <Select placeholder="Select role" options={addMemberRoleOptions} />
           </Form.Item>
           <Form.Item>
             <Space>
@@ -893,9 +958,12 @@ export default function ProjectProfile() {
           <Form.Item name="status" label="Project Status">
             <Select options={isSuperAdmin ? statusOptionsWithCompleted : statusOptionsBase} disabled={(project.status === 'Pending completion' || project.status === 'Completed') && !isSuperAdmin} />
           </Form.Item>
-          <Form.Item>
-            <Space>
-              <Button type="primary" htmlType="submit" disabled={(project.status === 'Pending completion' || project.status === 'Completed') && !isSuperAdmin}>Save changes</Button>
+          <Form.Item label="Actions">
+            <Space wrap size="middle">
+              <Button type="primary" htmlType="submit" disabled={(project.status === 'Pending completion' || project.status === 'Completed') && !isSuperAdmin}>
+                Save changes
+              </Button>
+              <Button onClick={closeProjectEditDrawer}>Cancel</Button>
               <Button
                 type="default"
                 icon={<CheckCircleOutlined />}
@@ -909,9 +977,35 @@ export default function ProjectProfile() {
               >
                 {(project.status === 'Pending completion' || project.status === 'Completed') ? 'Pending' : 'Mark as completed'}
               </Button>
-              <Button onClick={closeProjectEditDrawer}>Cancel</Button>
             </Space>
           </Form.Item>
+          {isSuperAdmin && project.status === 'Not Started' && id && (
+            <>
+              <Divider style={{ margin: '16px 0' }} />
+              <Form.Item label="Danger zone">
+                <Button
+                  danger
+                  icon={<DeleteOutlined />}
+                  onClick={() => {
+                    Modal.confirm({
+                      title: 'Delete this project?',
+                      content: `"${project.projectName}" (${project.projectId}) will be permanently deleted. This cannot be undone.`,
+                      okText: 'Delete',
+                      okButtonProps: { danger: true },
+                      cancelText: 'Cancel',
+                      onOk: async () => {
+                        await deleteProject(id)
+                        message.success('Project deleted.')
+                        navigate('/projects')
+                      },
+                    })
+                  }}
+                >
+                  Delete project
+                </Button>
+              </Form.Item>
+            </>
+          )}
         </Form>
       </Drawer>
     </div>

@@ -1,10 +1,10 @@
 import { useMemo, useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Typography, Table, Tag, Button, Input, Select, DatePicker, Space, Card, Progress, Segmented, Row, Col, Empty, Tabs, Pagination } from 'antd'
+import { Typography, Table, Tag, Button, Input, Select, DatePicker, Space, Card, Progress, Segmented, Row, Col, Empty, Tabs, Pagination, Checkbox } from 'antd'
 import { EyeOutlined, PlusOutlined, SearchOutlined, UnorderedListOutlined, AppstoreOutlined, TeamOutlined, CheckSquareOutlined, FileOutlined, CommentOutlined, UserOutlined } from '@ant-design/icons'
 import type { Dayjs } from 'dayjs'
 import dayjs from 'dayjs'
-import { getProjectById, getProjectsList, getRelatedProjectsForMember, type ProjectListRow, type ProjectDetail } from '../data/projects'
+import { getProjectById, getProjectsList, getRelatedProjectsForMember, isProjectOverdue, type ProjectListRow, type ProjectDetail } from '../data/projects'
 import { useCurrentUser } from '../context/CurrentUserContext'
 
 const priorityColors: Record<string, string> = {
@@ -30,6 +30,11 @@ const statusOptions = [
   { value: 'On Hold', label: 'On Hold' },
   { value: 'Pending completion', label: 'Pending completion' },
   { value: 'Completed', label: 'Completed' },
+]
+/** Status filter options include Overdue (computed from end date). */
+const statusFilterOptions = [
+  { value: 'Overdue', label: 'Overdue' },
+  ...statusOptions,
 ]
 
 type ProjectRow = ProjectListRow
@@ -104,10 +109,12 @@ export default function Projects() {
       active = false
     }
   }, [currentUserMemberId])
-  const baseProjects = useMemo(
-    () => (activeTab === 'my' ? allProjects.filter((p) => myProjectIds.includes(p.projectId)) : allProjects),
-    [activeTab, allProjects, myProjectIds]
-  )
+  const [showArchived, setShowArchived] = useState(false)
+  const baseProjects = useMemo(() => {
+    let list = activeTab === 'my' ? allProjects.filter((p) => myProjectIds.includes(p.projectId)) : allProjects
+    if (!showArchived) list = list.filter((p) => !p.isArchived)
+    return list
+  }, [activeTab, allProjects, myProjectIds, showArchived])
 
   const filteredProjects = useMemo(() => {
     let list = baseProjects
@@ -121,7 +128,11 @@ export default function Projects() {
       )
     }
     if (statusFilter) {
-      list = list.filter((p) => p.status === statusFilter)
+      if (statusFilter === 'Overdue') {
+        list = list.filter((p) => isProjectOverdue(p))
+      } else {
+        list = list.filter((p) => p.status === statusFilter)
+      }
     }
     if (dateRange && (dateRange[0] || dateRange[1])) {
       const [start, end] = dateRange
@@ -206,13 +217,25 @@ export default function Projects() {
       title: 'Status',
       dataIndex: 'status',
       key: 'status',
-      width: 120,
-      render: (status: string) => (
-        <Tag color={status === 'Completed' ? 'green' : status === 'Pending completion' ? 'orange' : 'default'}>{status}</Tag>
+      width: 140,
+      render: (status: string, r: ProjectRow) => (
+        <Space size={4} wrap>
+          <Tag color={status === 'Completed' ? 'green' : status === 'Pending completion' ? 'orange' : 'default'}>{status}</Tag>
+          {r.isArchived && <Tag>Archived</Tag>}
+          {isProjectOverdue(r) && <Tag color="red">Overdue</Tag>}
+        </Space>
       ),
     },
     { title: 'Start Date', dataIndex: 'startDate', key: 'startDate', width: 110, render: (d: string) => d || '—' },
     { title: 'End Date', dataIndex: 'endDate', key: 'endDate', width: 110, render: (d: string) => d || '—' },
+    {
+      title: 'Tasks',
+      key: 'tasks',
+      width: 90,
+      render: (_: unknown, r: ProjectRow) => (
+        <Typography.Text type="secondary">{r.completedTasksCount} / {r.tasksCount}</Typography.Text>
+      ),
+    },
     {
       title: 'Progress',
       dataIndex: 'progress',
@@ -285,7 +308,7 @@ export default function Projects() {
                         style={{ width: 140 }}
                         value={statusFilter ?? undefined}
                         onChange={(v) => setStatusFilter(v ?? null)}
-                        options={statusOptions}
+                        options={statusFilterOptions}
                       />
                       <DatePicker.RangePicker
                         placeholder={['Start date', 'End date']}
@@ -310,6 +333,11 @@ export default function Projects() {
                         >
                           Clear filters
                         </Button>
+                      )}
+                      {isSuperAdmin && (
+                        <Checkbox checked={showArchived} onChange={(e) => setShowArchived(e.target.checked)}>
+                          Show archived
+                        </Checkbox>
                       )}
                     </Space>
                     <Segmented
@@ -386,6 +414,7 @@ export default function Projects() {
                                   <Space size={6} style={{ marginTop: 8 }} wrap>
                                     <Tag color={priorityColors[p.priority] || 'default'} style={{ margin: 0 }}>{p.priority}</Tag>
                                     <Tag color={p.status === 'Completed' ? 'green' : p.status === 'Pending completion' ? 'orange' : 'default'} style={{ margin: 0 }}>{p.category}</Tag>
+                                    {isProjectOverdue(p) && <Tag color="red" style={{ margin: 0 }}>Overdue</Tag>}
                                   </Space>
                                   <Space size={8} style={{ marginTop: 6, fontSize: 12, color: 'rgba(0,0,0,0.65)' }}>
                                     <span><TeamOutlined /> {membersCount}</span>
@@ -450,7 +479,7 @@ export default function Projects() {
                         style={{ width: 140 }}
                         value={statusFilter ?? undefined}
                         onChange={(v) => setStatusFilter(v ?? null)}
-                        options={statusOptions}
+                        options={statusFilterOptions}
                       />
                       <DatePicker.RangePicker
                         placeholder={['Start date', 'End date']}
@@ -475,6 +504,11 @@ export default function Projects() {
                         >
                           Clear filters
                         </Button>
+                      )}
+                      {isSuperAdmin && (
+                        <Checkbox checked={showArchived} onChange={(e) => setShowArchived(e.target.checked)}>
+                          Show archived
+                        </Checkbox>
                       )}
                     </Space>
                     <Segmented
@@ -552,6 +586,7 @@ export default function Projects() {
                                   <Space size={6} style={{ marginTop: 8 }} wrap>
                                     <Tag color={priorityColors[p.priority] || 'default'} style={{ margin: 0 }}>{p.priority}</Tag>
                                     <Tag color={p.status === 'Completed' ? 'green' : p.status === 'Pending completion' ? 'orange' : 'default'} style={{ margin: 0 }}>{p.category}</Tag>
+                                    {isProjectOverdue(p) && <Tag color="red" style={{ margin: 0 }}>Overdue</Tag>}
                                   </Space>
                                   <Space size={8} style={{ marginTop: 6, fontSize: 12, color: 'rgba(0,0,0,0.65)' }}>
                                     <span><TeamOutlined /> {membersCount}</span>

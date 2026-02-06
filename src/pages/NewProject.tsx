@@ -5,6 +5,7 @@ import type { UploadFile } from 'antd/es/upload/interface'
 import { ArrowLeftOutlined, TeamOutlined } from '@ant-design/icons'
 import { useProjectMeta } from '../context/ProjectMetaContext'
 import { getMembersList } from '../data/members'
+import { createProject } from '../data/projects'
 import { useUnsavedChanges } from '../context/UnsavedChangesContext'
 import { useCurrentUser } from '../context/CurrentUserContext'
 
@@ -15,12 +16,11 @@ const priorityOptions = [
   { value: 'Urgent', label: 'Urgent' },
 ]
 
-const statusOptions = [
+// New project: only Not Started, In Progress, On Hold (no Pending completion or Completed)
+const statusOptionsNewProject = [
   { value: 'Not Started', label: 'Not Started' },
   { value: 'In Progress', label: 'In Progress' },
   { value: 'On Hold', label: 'On Hold' },
-  { value: 'Pending completion', label: 'Pending completion' },
-  { value: 'Completed', label: 'Completed' },
 ]
 
 function formatBytes(bytes?: number) {
@@ -33,7 +33,8 @@ function formatBytes(bytes?: number) {
 
 export default function NewProject() {
   const navigate = useNavigate()
-  const { isSuperAdmin } = useCurrentUser()
+  const { isSuperAdmin, displayName } = useCurrentUser()
+  const [submitting, setSubmitting] = useState(false)
   const [form] = Form.useForm()
   const { categories, tags } = useProjectMeta()
   const [fileList, setFileList] = useState<UploadFile[]>([])
@@ -62,12 +63,29 @@ export default function NewProject() {
   const categoryOptions = categories.map((c) => ({ value: c, label: c }))
   const tagOptions = tags.map((t) => ({ value: t, label: t }))
 
-  const membersList = getMembersList()
+  const [membersList, setMembersList] = useState<{ memberId: string; name: string }[]>([])
+  useEffect(() => {
+    getMembersList().then(setMembersList).catch(() => setMembersList([]))
+  }, [])
   const memberOptions = membersList.map((m) => ({ value: m.memberId, label: m.name }))
   const selectedLeadId = Form.useWatch('projectLead', form)
   const projectMemberOptions = selectedLeadId
     ? memberOptions.filter((opt) => opt.value !== selectedLeadId)
     : memberOptions
+
+  const startDate = Form.useWatch('startDate', form)
+  const endDate = Form.useWatch('endDate', form)
+  const hasBothDates = startDate != null && endDate != null
+  // When start and end dates are set, status cannot be Not Started
+  const statusOptions = hasBothDates
+    ? statusOptionsNewProject.filter((o) => o.value !== 'Not Started')
+    : statusOptionsNewProject
+  const currentStatus = Form.useWatch('status', form)
+  useEffect(() => {
+    if (hasBothDates && currentStatus === 'Not Started') {
+      form.setFieldValue('status', 'In Progress')
+    }
+  }, [hasBothDates, currentStatus, form])
 
   const onFinish = (values: Record<string, unknown>) => {
     const start = values.startDate as { format?: (s: string) => string } | undefined
@@ -111,11 +129,34 @@ export default function NewProject() {
       ),
       okText: 'Create project',
       cancelText: 'Cancel',
-      onOk: () => {
-        console.log('New project:', payload)
-        message.success('Project created successfully.')
-        setDirty(false)
-        navigate('/projects')
+      onOk: async () => {
+        setSubmitting(true)
+        try {
+          const projectId = await createProject({
+            projectName: String(values.projectName ?? ''),
+            projectCategory: String(values.projectCategory ?? ''),
+            projectTag: tagStr,
+            priority: (values.priority as 'Low' | 'Medium' | 'High' | 'Urgent') ?? 'Medium',
+            startDate: (start?.format?.('YYYY-MM-DD') ?? values.startDate) ?? '',
+            endDate: (end?.format?.('YYYY-MM-DD') ?? values.endDate) ?? '',
+            status: String(values.status ?? 'Not Started'),
+            members,
+            files: fileList.map((f, idx) => ({
+              key: `new-file-${idx + 1}`,
+              name: f.name,
+              size: formatBytes(f.size),
+              uploadedAt: new Date().toISOString().slice(0, 10),
+            })),
+            createdBy: (displayName || 'User').trim(),
+          })
+          message.success('Project created successfully.')
+          setDirty(false)
+          navigate(`/projects/${projectId}`)
+        } catch (err) {
+          message.error(err instanceof Error ? err.message : 'Failed to create project.')
+        } finally {
+          setSubmitting(false)
+        }
       },
     })
   }
@@ -230,8 +271,8 @@ export default function NewProject() {
 
           <Form.Item>
             <Space>
-              <Button type="primary" htmlType="submit">Create project</Button>
-              <Button onClick={() => confirmNavigation('/projects', () => navigate('/projects'))}>Cancel</Button>
+              <Button type="primary" htmlType="submit" loading={submitting}>Create project</Button>
+              <Button onClick={() => confirmNavigation('/projects', () => navigate('/projects'))} disabled={submitting}>Cancel</Button>
             </Space>
           </Form.Item>
         </Form>

@@ -1,8 +1,8 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { Card, Form, Input, Select, Button, Space, Typography, Tag, message, Row, Col, Modal } from 'antd'
+import { Card, Form, Input, Select, Button, Space, Typography, Tag, message, Row, Col, Modal, Spin } from 'antd'
 import { ArrowLeftOutlined, DeleteOutlined } from '@ant-design/icons'
-import { getMemberById } from '../data/members'
+import { getMemberById, updateMember, type MemberDetail } from '../data/members'
 import AvatarPicker from '../components/AvatarPicker'
 import { useCurrentUser } from '../context/CurrentUserContext'
 import { SYSTEM_ROLE } from '../constants/roles'
@@ -31,13 +31,33 @@ const jobTypeOptions = [
 export default function EditMember() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
-  const { isSuperAdmin } = useCurrentUser()
+  const { isSuperAdmin, currentUserMemberId, refreshMemberProfile } = useCurrentUser()
   const [form] = Form.useForm()
-  const member = id ? getMemberById(id) : null
+  const [member, setMember] = useState<MemberDetail | null>(null)
+  const [loading, setLoading] = useState(!!id)
 
   useEffect(() => {
     if (!isSuperAdmin) navigate('/members', { replace: true })
   }, [isSuperAdmin, navigate])
+
+  useEffect(() => {
+    if (!id) {
+      setMember(null)
+      setLoading(false)
+      return
+    }
+    let active = true
+    setLoading(true)
+    getMemberById(id).then((m) => {
+      if (active) {
+        setMember(m)
+        setLoading(false)
+      }
+    }).catch(() => {
+      if (active) setLoading(false)
+    })
+    return () => { active = false }
+  }, [id])
 
   useEffect(() => {
     if (member) {
@@ -70,15 +90,54 @@ export default function EditMember() {
     })
   }
 
-  const onFinish = (values: Record<string, unknown>) => {
-    const payload = { ...values, role: SYSTEM_ROLE.MEMBER }
-    // TODO: Update in Firebase (e.g. updateDoc in 'members' collection)
-    console.log('Update member:', id, payload)
-    message.success('Profile updated successfully.')
-    navigate(`/members/${id}`)
+  const [saving, setSaving] = useState(false)
+  const onFinish = async (values: Record<string, unknown>) => {
+    if (!id || !member) return
+    setSaving(true)
+    try {
+      await updateMember(member.memberId, {
+        firstName: String(values.firstName ?? ''),
+        lastName: String(values.lastName ?? ''),
+        email: String(values.email ?? ''),
+        phone: values.phone ? String(values.phone) : undefined,
+        department: String(values.department ?? ''),
+        jobType: values.jobType ? String(values.jobType) : undefined,
+        position: values.position ? String(values.position) : undefined,
+        accountStatus: (values.accountStatus as 'Active' | 'Inactive') ?? 'Active',
+        avatarUrl: values.profileImage ? String(values.profileImage) : null,
+      })
+      const isEditingSelf = currentUserMemberId && member.memberId.toUpperCase() === currentUserMemberId.toUpperCase()
+      if (isEditingSelf) await refreshMemberProfile()
+      message.success('Profile updated successfully.')
+      navigate(`/members/${id}`)
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : 'Failed to update profile.')
+    } finally {
+      setSaving(false)
+    }
   }
 
-  if (!id || !member) {
+  if (!id) {
+    return (
+      <div>
+        <Button type="text" icon={<ArrowLeftOutlined />} onClick={() => navigate('/members')}>
+          Back to Members
+        </Button>
+        <Typography.Text type="secondary">Member ID required.</Typography.Text>
+      </div>
+    )
+  }
+  if (loading) {
+    return (
+      <div>
+        <Button type="text" icon={<ArrowLeftOutlined />} onClick={() => navigate('/members')}>
+          Back to Members
+        </Button>
+        <Spin style={{ marginTop: 16 }} />
+      </div>
+    )
+  }
+  if (!member) {
     return (
       <div>
         <Button type="text" icon={<ArrowLeftOutlined />} onClick={() => navigate('/members')}>
@@ -188,10 +247,10 @@ export default function EditMember() {
 
           <Form.Item>
             <Space wrap>
-              <Button type="primary" htmlType="submit">
+              <Button type="primary" htmlType="submit" loading={saving}>
                 Save changes
               </Button>
-              <Button onClick={() => navigate(`/members/${id}`)}>
+              <Button onClick={() => navigate(`/members/${id}`)} disabled={saving}>
                 Cancel
               </Button>
               {isSuperAdmin && (

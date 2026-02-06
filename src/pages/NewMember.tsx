@@ -1,10 +1,11 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Card, Form, Input, Select, Button, Space, Typography, Tag, message, Row, Col } from 'antd'
 import { ArrowLeftOutlined } from '@ant-design/icons'
 import AvatarPicker from '../components/AvatarPicker'
 import { useCurrentUser } from '../context/CurrentUserContext'
 import { SYSTEM_ROLE } from '../constants/roles'
+import { createMember } from '../data/members'
 import { ADMIN_POSITION_OPTIONS } from '../data/admins'
 
 const jobTypeOptions = [
@@ -23,17 +24,34 @@ export default function NewMember() {
   const navigate = useNavigate()
   const { isSuperAdmin } = useCurrentUser()
   const [form] = Form.useForm()
+  const [submitting, setSubmitting] = useState(false)
 
   useEffect(() => {
     if (!isSuperAdmin) navigate('/members', { replace: true })
   }, [isSuperAdmin, navigate])
 
-  const onFinish = (values: Record<string, unknown>) => {
-    const payload = { ...values, role: SYSTEM_ROLE.MEMBER }
-    // TODO: Save to Firebase (e.g. addDoc to 'members' collection)
-    console.log('New member:', payload)
-    message.success('Member added successfully.')
-    navigate('/members')
+  const onFinish = async (values: Record<string, unknown>) => {
+    setSubmitting(true)
+    try {
+      const memberId = await createMember({
+        firstName: String(values.firstName ?? ''),
+        lastName: String(values.lastName ?? ''),
+        email: String(values.email ?? ''),
+        phone: values.phone ? String(values.phone) : undefined,
+        department: String(values.department ?? ''),
+        jobType: values.jobType ? String(values.jobType) : undefined,
+        position: values.position ? String(values.position) : undefined,
+        accountStatus: (values.accountStatus as 'Active' | 'Inactive') ?? 'Active',
+        avatarUrl: values.profileImage ? String(values.profileImage) : null,
+        role: 'member',
+      })
+      message.success('Member added successfully.')
+      navigate(`/members/${memberId}`)
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : 'Failed to add member.')
+    } finally {
+      setSubmitting(false)
+    }
   }
 
   return (
@@ -141,10 +159,10 @@ export default function NewMember() {
 
           <Form.Item>
             <Space>
-              <Button type="primary" htmlType="submit">
+              <Button type="primary" htmlType="submit" loading={submitting}>
                 Add member
               </Button>
-              <Button onClick={() => navigate('/members')}>
+              <Button onClick={() => navigate('/members')} disabled={submitting}>
                 Cancel
               </Button>
             </Space>

@@ -1,5 +1,6 @@
+import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Typography, Table, Tag, Button, Space } from 'antd'
+import { Typography, Table, Tag, Button, Space, Spin } from 'antd'
 import { EyeOutlined, PlusOutlined } from '@ant-design/icons'
 import MemberAvatar from '../components/MemberAvatar'
 import { useCurrentUser } from '../context/CurrentUserContext'
@@ -8,7 +9,16 @@ import { getAdminsList, type ProjectLeadRow } from '../data/admins'
 export default function Admins() {
   const navigate = useNavigate()
   const { isSuperAdmin } = useCurrentUser()
-  const rows = getAdminsList()
+  const [rows, setRows] = useState<ProjectLeadRow[]>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    let active = true
+    getAdminsList().then((list) => {
+      if (active) setRows(list)
+    }).finally(() => { if (active) setLoading(false) })
+    return () => { active = false }
+  }, [])
 
   const columns = [
     {
@@ -65,13 +75,17 @@ export default function Admins() {
           </Button>
         )}
       </div>
-      <Table
-        rowKey="id"
-        dataSource={rows}
-        columns={columns}
-        size="small"
-        pagination={{ pageSize: 10 }}
-      />
+      {loading ? (
+        <div style={{ textAlign: 'center', padding: 24 }}><Spin /></div>
+      ) : (
+        <Table
+          rowKey="id"
+          dataSource={rows}
+          columns={columns}
+          size="small"
+          pagination={{ pageSize: 10 }}
+        />
+      )}
     </div>
   )
 }

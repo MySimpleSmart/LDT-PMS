@@ -1,16 +1,32 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Typography, Table, Tag, Button, Space, Card, Input } from 'antd'
+import { Typography, Table, Tag, Button, Space, Card, Input, Spin } from 'antd'
 import { useCurrentUser } from '../context/CurrentUserContext'
 import { EyeOutlined, PlusOutlined, SearchOutlined } from '@ant-design/icons'
 import MemberAvatar from '../components/MemberAvatar'
-import { getMembersTableList } from '../data/members'
+import { getMembersTableList, type MembersTableRow } from '../data/members'
 
 export default function Members() {
   const navigate = useNavigate()
   const { isSuperAdmin } = useCurrentUser()
-  const allMembers = getMembersTableList()
+  const [allMembers, setAllMembers] = useState<MembersTableRow[]>([])
+  const [loading, setLoading] = useState(true)
   const [searchText, setSearchText] = useState('')
+
+  useEffect(() => {
+    let active = true
+    ;(async () => {
+      try {
+        const list = await getMembersTableList()
+        if (active) setAllMembers(list)
+      } catch (err) {
+        if (active) setAllMembers([])
+      } finally {
+        if (active) setLoading(false)
+      }
+    })()
+    return () => { active = false }
+  }, [])
 
   const filteredMembers = useMemo(() => {
     if (!searchText.trim()) return allMembers
@@ -30,7 +46,7 @@ export default function Members() {
     {
       title: 'Member',
       key: 'member',
-      render: (_: unknown, r: (typeof allMembers)[0]) => (
+      render: (_: unknown, r: MembersTableRow) => (
         <Space wrap>
           <Space>
             <MemberAvatar profileImage={r.profileImage} firstName={r.firstName} lastName={r.lastName} size={32} />
@@ -56,7 +72,7 @@ export default function Members() {
       title: 'Action',
       key: 'action',
       width: 120,
-      render: (_: unknown, r: (typeof allMembers)[0]) => (
+      render: (_: unknown, r: MembersTableRow) => (
         <Button type="link" size="small" icon={<EyeOutlined />} onClick={() => navigate(`/members/${r.id}`)}>
           View profile
         </Button>
@@ -89,13 +105,17 @@ export default function Members() {
           style={{ width: 320 }}
         />
       </Card>
-      <Table
-        rowKey="id"
-        dataSource={filteredMembers}
-        columns={columns}
-        size="small"
-        pagination={{ pageSize: 10, showSizeChanger: true, pageSizeOptions: [10, 20, 50, 100] }}
-      />
+      {loading ? (
+        <div style={{ textAlign: 'center', padding: 24 }}><Spin /></div>
+      ) : (
+        <Table
+          rowKey="id"
+          dataSource={filteredMembers}
+          columns={columns}
+          size="small"
+          pagination={{ pageSize: 10, showSizeChanger: true, pageSizeOptions: [10, 20, 50, 100] }}
+        />
+      )}
     </div>
   )
 }

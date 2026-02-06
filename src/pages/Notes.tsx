@@ -82,7 +82,10 @@ export default function Notes() {
   const [form] = Form.useForm()
 
   const authorName = displayName.trim() || 'User'
-  const members = getMembersList()
+  const [members, setMembers] = useState<{ memberId: string; name: string }[]>([])
+  useEffect(() => {
+    getMembersList().then(setMembers).catch(() => setMembers([]))
+  }, [])
   const notesList = Array.isArray(notes) ? notes : []
 
   const [searchText, setSearchText] = useState('')

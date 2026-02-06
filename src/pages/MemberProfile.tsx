@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   Typography,
@@ -59,7 +59,31 @@ export default function MemberProfile() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const { isSuperAdmin, currentUserMemberId, isProjectLead } = useCurrentUser()
-  const member = id ? getMemberById(id) : null
+  const [member, setMember] = useState<Awaited<ReturnType<typeof getMemberById>>>(null)
+  const [loading, setLoading] = useState(!!id)
+
+  useEffect(() => {
+    if (!id) {
+      setMember(null)
+      setLoading(false)
+      return
+    }
+    let active = true
+    setLoading(true)
+    getMemberById(id).then((m) => {
+      if (active) {
+        setMember(m)
+        setLoading(false)
+      }
+    }).catch(() => {
+      if (active) {
+        setMember(null)
+        setLoading(false)
+      }
+    })
+    return () => { active = false }
+  }, [id])
+
   const isOwnProfile = Boolean(member && currentUserMemberId && member.memberId.toUpperCase() === currentUserMemberId.toUpperCase())
   const showSettingsForLead = isProjectLead && isOwnProfile
   const fullName = member ? `${member.firstName} ${member.lastName}` : ''
@@ -68,6 +92,16 @@ export default function MemberProfile() {
   const [passwordLoading, setPasswordLoading] = useState(false)
   const [emailLoading, setEmailLoading] = useState(false)
 
+  if (loading) {
+    return (
+      <div>
+        <Button type="text" icon={<ArrowLeftOutlined />} onClick={() => navigate('/members')}>
+          Back to Members
+        </Button>
+        <Typography.Text type="secondary">Loading…</Typography.Text>
+      </div>
+    )
+  }
   if (!member) {
     return (
       <div>
