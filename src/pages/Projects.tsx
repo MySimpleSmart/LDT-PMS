@@ -1,6 +1,6 @@
 import { useMemo, useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Typography, Table, Tag, Button, Input, Select, DatePicker, Space, Card, Progress, Segmented, Row, Col, Empty, Tabs, Pagination, Checkbox, message } from 'antd'
+import { Typography, Table, Tag, Tooltip, Button, Input, Select, DatePicker, Space, Card, Progress, Segmented, Row, Col, Empty, Tabs, Pagination, Checkbox, message } from 'antd'
 import { EyeOutlined, PlusOutlined, SearchOutlined, UnorderedListOutlined, AppstoreOutlined, TeamOutlined, CheckSquareOutlined, FileOutlined, CommentOutlined, UserOutlined } from '@ant-design/icons'
 import type { Dayjs } from 'dayjs'
 import dayjs from 'dayjs'
@@ -33,6 +33,17 @@ function daysUntilStart(startDate: string | undefined): number | null {
   const start = dayjs(startDate).startOf('day')
   const today = dayjs().startOf('day')
   return start.diff(today, 'day')
+}
+
+/** Count tasks that are not completed and have end date in the past. */
+function countOverdueTasks(tasks: { status?: string; endDate?: string }[] | undefined): number {
+  if (!Array.isArray(tasks)) return 0
+  const today = dayjs().startOf('day')
+  return tasks.filter((t) => {
+    if (t.status === 'Completed') return false
+    if (!t.endDate?.trim()) return false
+    return dayjs(t.endDate).startOf('day').isBefore(today)
+  }).length
 }
 
 function formatShortDate(dateStr: string | undefined): string {
@@ -354,6 +365,11 @@ export default function Projects() {
     setKanbanVisibleCount({})
   }, [filteredProjects.length])
 
+  const totalOverdueTasksInList = useMemo(
+    () => filteredProjects.reduce((sum, r) => sum + countOverdueTasks(projectDetailsById[r.id]?.tasks), 0),
+    [filteredProjects, projectDetailsById]
+  )
+
   const columns = [
     { title: 'Project ID', dataIndex: 'projectId', key: 'projectId', width: 100 },
     { title: 'Project Name', dataIndex: 'projectName', key: 'projectName' },
@@ -428,12 +444,32 @@ export default function Projects() {
       },
     },
     {
-      title: 'Tasks',
+      title:
+        totalOverdueTasksInList > 0 ? (
+          <Space size={6}>
+            <span>Tasks</span>
+            <Tooltip title="Total overdue tasks in this list">
+              <Tag color="red" style={{ margin: 0 }}>{totalOverdueTasksInList}</Tag>
+            </Tooltip>
+          </Space>
+        ) : (
+          'Tasks'
+        ),
       key: 'tasks',
-      width: 90,
-      render: (_: unknown, r: ProjectRow) => (
-        <Typography.Text type="secondary">{r.completedTasksCount} / {r.tasksCount}</Typography.Text>
-      ),
+      width: 120,
+      render: (_: unknown, r: ProjectRow) => {
+        const overdue = countOverdueTasks(projectDetailsById[r.id]?.tasks)
+        return (
+          <Space size={6} wrap={false}>
+            <Typography.Text type="secondary">{r.completedTasksCount} / {r.tasksCount}</Typography.Text>
+            {overdue > 0 && (
+              <Tooltip title={`${overdue} overdue task${overdue !== 1 ? 's' : ''}`}>
+                <Tag color="red" style={{ margin: 0 }}>{overdue}</Tag>
+              </Tooltip>
+            )}
+          </Space>
+        )
+      },
     },
     {
       title: 'Progress',
@@ -604,7 +640,7 @@ export default function Projects() {
                             {visibleProjects.map((p) => {
                               const d = projectDetailsById[p.id]
                               const membersCount = d?.members.length ?? 0
-                              const tasksCount = d?.tasks.length ?? 0
+                              const overdueTasks = countOverdueTasks(d?.tasks)
                               return (
                                 <Card
                                   key={p.id}
@@ -628,7 +664,14 @@ export default function Projects() {
                                   </Space>
                                   <Space size={8} style={{ marginTop: 6, fontSize: 12, color: 'rgba(0,0,0,0.65)' }}>
                                     <span><TeamOutlined /> {membersCount}</span>
-                                    <span><CheckSquareOutlined /> {tasksCount}</span>
+                                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                                      <span><CheckSquareOutlined /> {p.completedTasksCount} / {p.tasksCount}</span>
+                                      {overdueTasks > 0 && (
+                                        <Tooltip title={`${overdueTasks} overdue task${overdueTasks !== 1 ? 's' : ''}`}>
+                                          <Tag color="red" style={{ margin: 0 }}>{overdueTasks}</Tag>
+                                        </Tooltip>
+                                      )}
+                                    </span>
                                   </Space>
                                   <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 6 }}>
                                     {(() => {
@@ -809,7 +852,7 @@ export default function Projects() {
                             {visibleProjects.map((p) => {
                               const d = projectDetailsById[p.id]
                               const membersCount = d?.members.length ?? 0
-                              const tasksCount = d?.tasks.length ?? 0
+                              const overdueTasks = countOverdueTasks(d?.tasks)
                               return (
                                 <Card
                                   key={p.id}
@@ -833,7 +876,14 @@ export default function Projects() {
                                   </Space>
                                   <Space size={8} style={{ marginTop: 6, fontSize: 12, color: 'rgba(0,0,0,0.65)' }}>
                                     <span><TeamOutlined /> {membersCount}</span>
-                                    <span><CheckSquareOutlined /> {tasksCount}</span>
+                                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                                      <span><CheckSquareOutlined /> {p.completedTasksCount} / {p.tasksCount}</span>
+                                      {overdueTasks > 0 && (
+                                        <Tooltip title={`${overdueTasks} overdue task${overdueTasks !== 1 ? 's' : ''}`}>
+                                          <Tag color="red" style={{ margin: 0 }}>{overdueTasks}</Tag>
+                                        </Tooltip>
+                                      )}
+                                    </span>
                                   </Space>
                                   <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 6 }}>
                                     {(() => {

@@ -59,6 +59,33 @@ function excerpt(text: string, max = 60): string {
   return `${t.slice(0, Math.max(0, max - 1))}…`
 }
 
+/** Days from today to endDate; negative = overdue. Returns null if no end date. */
+function daysUntilEnd(endDate: string | undefined): number | null {
+  if (!endDate?.trim()) return null
+  const end = dayjs(endDate).startOf('day')
+  const today = dayjs().startOf('day')
+  return end.diff(today, 'day')
+}
+
+/** Days from today to startDate; positive = start is in the future. Returns null if no start date. */
+function daysUntilStart(startDate: string | undefined): number | null {
+  if (!startDate?.trim()) return null
+  const start = dayjs(startDate).startOf('day')
+  const today = dayjs().startOf('day')
+  return start.diff(today, 'day')
+}
+
+/** Count tasks that are not completed and have end date in the past. */
+function countOverdueTasks(tasks: { status?: string; endDate?: string }[] | undefined): number {
+  if (!Array.isArray(tasks)) return 0
+  const today = dayjs().startOf('day')
+  return tasks.filter((t) => {
+    if (t.status === 'Completed') return false
+    if (!t.endDate?.trim()) return false
+    return dayjs(t.endDate).startOf('day').isBefore(today)
+  }).length
+}
+
 function formatDate(d: string) {
   try {
     return new Date(d).toLocaleDateString()
@@ -928,8 +955,42 @@ export default function ProjectProfile() {
         )
       },
     },
-    { title: 'Start Date', dataIndex: 'startDate', key: 'startDate', width: 110, render: (d: string) => d || '—' },
-    { title: 'End Date', dataIndex: 'endDate', key: 'endDate', width: 110, render: (d: string) => d || '—' },
+    { title: 'Started Date', dataIndex: 'startDate', key: 'startDate', width: 110, render: (d: string) => d || '—' },
+    {
+      title: 'Timeline',
+      dataIndex: 'endDate',
+      key: 'endDate',
+      width: 150,
+      render: (_: string, record: ProjectTask) => {
+        if (!record.endDate?.trim()) return 'No end date'
+        const end = dayjs(record.endDate).startOf('day')
+        if (record.status === 'Completed') {
+          const completed = dayjs(record.completedAt || new Date().toISOString()).startOf('day')
+          const daysAtCompletion = end.diff(completed, 'day')
+          if (daysAtCompletion > 0) {
+            return `${daysAtCompletion} day${daysAtCompletion !== 1 ? 's' : ''} before completed`
+          }
+          if (daysAtCompletion === 0) {
+            return 'Completed on due date'
+          }
+          const overdueAtCompletion = Math.abs(daysAtCompletion)
+          return `${overdueAtCompletion} day${overdueAtCompletion !== 1 ? 's' : ''} after due date`
+        }
+        const daysToStart = daysUntilStart(record.startDate)
+        if (daysToStart !== null && daysToStart > 0) {
+          const label = daysToStart === 1 ? 'Starts tomorrow' : `Starts in ${daysToStart} days`
+          return <span style={{ color: '#1890ff', fontWeight: 500 }}>{label}</span>
+        }
+        const days = daysUntilEnd(record.endDate)
+        if (days === null) return 'No end date'
+        if (days < 0) {
+          const overdue = Math.abs(days)
+          const label = `${overdue} day${overdue !== 1 ? 's' : ''} overdue`
+          return <span style={{ color: '#ff4d4f', fontWeight: 500 }}>{label}</span>
+        }
+        return `${days} day${days !== 1 ? 's' : ''} left`
+      },
+    },
     {
       title: 'Notes',
       key: 'notes',
@@ -1067,6 +1128,16 @@ export default function ProjectProfile() {
                   <Typography.Text type="secondary">Tasks (stored)</Typography.Text>
                   <div>{project.completedTasksCount} / {project.tasksCount} completed</div>
                 </Col>
+                {countOverdueTasks(project.tasks) > 0 && (
+                  <Col xs={24} md={12}>
+                    <Typography.Text type="secondary">Overdue tasks</Typography.Text>
+                    <div>
+                      <Tooltip title={`${countOverdueTasks(project.tasks)} overdue task${countOverdueTasks(project.tasks) !== 1 ? 's' : ''}`}>
+                        <Tag color="red" style={{ margin: 0 }}>{countOverdueTasks(project.tasks)}</Tag>
+                      </Tooltip>
+                    </div>
+                  </Col>
+                )}
                 <Col xs={24} md={12}>
                   <Typography.Text type="secondary">Archived</Typography.Text>
                   <div>{project.isArchived ? <Tag>Archived</Tag> : 'No'}</div>
