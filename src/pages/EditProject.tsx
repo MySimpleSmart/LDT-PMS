@@ -14,12 +14,11 @@ const priorityOptions = [
   { value: 'Urgent', label: 'Urgent' },
 ]
 
+// Super Admin / Admin only see and set Not Started, In Progress, On Hold. They see Pending completion / Completed on the project page to confirm or reject.
 const statusOptions = [
   { value: 'Not Started', label: 'Not Started' },
   { value: 'In Progress', label: 'In Progress' },
   { value: 'On Hold', label: 'On Hold' },
-  { value: 'Pending completion', label: 'Pending completion' },
-  { value: 'Completed', label: 'Completed' },
 ]
 
 export default function EditProject() {
@@ -85,7 +84,7 @@ export default function EditProject() {
           projectCategory: String(values.projectCategory ?? ''),
           projectTag: tagStr,
           priority: values.priority as 'Low' | 'Medium' | 'High' | 'Urgent',
-          status: values.status as 'Not Started' | 'In Progress' | 'On Hold' | 'Pending completion' | 'Completed',
+          status: values.status as 'Not Started' | 'In Progress' | 'On Hold',
           startDate: start?.format?.('YYYY-MM-DD') ?? '',
           endDate: end?.format?.('YYYY-MM-DD') ?? '',
         })

@@ -85,9 +85,7 @@ const statusOptionsBase = [
   { value: 'Not Started', label: 'Not Started' },
   { value: 'In Progress', label: 'In Progress' },
   { value: 'On Hold', label: 'On Hold' },
-  { value: 'Pending completion', label: 'Pending completion' },
 ]
-const statusOptionsWithCompleted = [...statusOptionsBase, { value: 'Completed', label: 'Completed' }]
 
 const projectRoleOptions = [
   { value: 'Lead', label: 'Lead' },
@@ -355,6 +353,7 @@ export default function ProjectProfile() {
             const completedBaseTasks = baseTasks.map((t) => ({
               ...t,
               status: 'Completed',
+              completedAt: new Date().toISOString(),
             }))
             const activity = pushActivity('project_completed', 'Project marked as Completed')
             const activityLog = [...(project.activityLog || []), activity]
@@ -362,12 +361,13 @@ export default function ProjectProfile() {
             logToProfileActivity(activity)
 
             // Update any local (session-only) tasks in this profile view
-            setLocalTasks((prev) => prev.map((t) => ({ ...t, status: 'Completed' })))
+            const completedAt = new Date().toISOString()
+            setLocalTasks((prev) => prev.map((t) => ({ ...t, status: 'Completed', completedAt })))
 
             // Also update global Tasks list for tasks belonging to this project
             globalTasks
               .filter((t) => t.projectId === project.projectId)
-              .forEach((t) => updateTask(t.id, { status: 'Completed' }))
+              .forEach((t) => updateTask(t.id, { status: 'Completed', completedAt: new Date().toISOString() }))
           } else {
             const activity = pushActivity('project_updated', 'Updated project details')
             const activityLog = [...(project.activityLog || []), activity]
@@ -409,13 +409,14 @@ export default function ProjectProfile() {
   const confirmPendingProject = async () => {
     if (!id || !project) return
     const baseTasks = Array.isArray(project.tasks) ? project.tasks : []
-    const completedBaseTasks = baseTasks.map((t) => ({ ...t, status: 'Completed' }))
+    const completedAt = new Date().toISOString()
+    const completedBaseTasks = baseTasks.map((t) => ({ ...t, status: 'Completed', completedAt }))
     const activity = pushActivity('project_completed', 'Project confirmed and marked as Completed')
     const activityLog = [...(project.activityLog || []), activity]
     await updateProjectById(id, { status: 'Completed', tasks: completedBaseTasks, activityLog })
     logToProfileActivity(activity)
-    setLocalTasks((prev) => prev.map((t) => ({ ...t, status: 'Completed' })))
-    globalTasks.filter((t) => t.projectId === project.projectId).forEach((t) => updateTask(t.id, { status: 'Completed' }))
+    setLocalTasks((prev) => prev.map((t) => ({ ...t, status: 'Completed', completedAt })))
+    globalTasks.filter((t) => t.projectId === project.projectId).forEach((t) => updateTask(t.id, { status: 'Completed', completedAt }))
     message.success('Project confirmed and marked as Completed.')
     setProjectVersion((v) => v + 1)
   }
@@ -1411,7 +1412,7 @@ export default function ProjectProfile() {
             </Col>
           </Row>
           <Form.Item name="status" label="Project Status">
-            <Select options={isSuperAdmin ? statusOptionsWithCompleted : statusOptionsBase} disabled={(project.status === 'Pending completion' || project.status === 'Completed') && !isSuperAdmin} />
+            <Select options={statusOptionsBase} disabled={(project.status === 'Pending completion' || project.status === 'Completed') && !isSuperAdmin} />
           </Form.Item>
           <Form.Item label="Actions">
             <Space wrap size="middle">

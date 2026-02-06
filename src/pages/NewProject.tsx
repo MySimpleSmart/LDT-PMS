@@ -76,20 +76,28 @@ export default function NewProject() {
   const startDate = Form.useWatch('startDate', form)
   const endDate = Form.useWatch('endDate', form)
   const hasBothDates = startDate != null && endDate != null
-  // When start and end dates are set, status cannot be Not Started
+  // In Progress requires both dates. Without both dates, only Not Started or On Hold.
   const statusOptions = hasBothDates
-    ? statusOptionsNewProject.filter((o) => o.value !== 'Not Started')
-    : statusOptionsNewProject
+    ? statusOptionsNewProject.filter((o) => o.value !== 'Not Started')  // In Progress, On Hold
+    : statusOptionsNewProject.filter((o) => o.value !== 'In Progress')  // Not Started, On Hold
   const currentStatus = Form.useWatch('status', form)
   useEffect(() => {
     if (hasBothDates && currentStatus === 'Not Started') {
       form.setFieldValue('status', 'In Progress')
     }
   }, [hasBothDates, currentStatus, form])
+  useEffect(() => {
+    if (!hasBothDates && currentStatus === 'In Progress') {
+      form.setFieldValue('status', 'Not Started')
+    }
+  }, [hasBothDates, currentStatus, form])
 
   const onFinish = (values: Record<string, unknown>) => {
     const start = values.startDate as { format?: (s: string) => string } | undefined
     const end = values.endDate as { format?: (s: string) => string } | undefined
+    const hasDates = start != null && end != null
+    let status = (values.status as string) || 'Not Started'
+    if (status === 'In Progress' && !hasDates) status = 'Not Started'
     const tagVal = values.projectTag
     const tagStr = Array.isArray(tagVal) ? (tagVal as string[]).join(', ') : String(tagVal ?? '')
     const leadId = values.projectLead as string | undefined
@@ -136,7 +144,7 @@ export default function NewProject() {
             <div style={confirmRowStyle}><span style={confirmLabelStyle}>Category</span><span style={confirmValueStyle}>{String(values.projectCategory ?? '—')}</span></div>
             <div style={confirmRowStyle}><span style={confirmLabelStyle}>Tags</span><span style={confirmValueStyle}>{tagStr || '—'}</span></div>
             <div style={confirmRowStyle}><span style={confirmLabelStyle}>Priority</span><span style={confirmValueStyle}>{String(values.priority ?? '—')}</span></div>
-            <div style={confirmRowStyle}><span style={confirmLabelStyle}>Status</span><span style={confirmValueStyle}>{String(values.status ?? '—')}</span></div>
+            <div style={confirmRowStyle}><span style={confirmLabelStyle}>Status</span><span style={confirmValueStyle}>{status}</span></div>
             <div style={confirmRowStyle}><span style={confirmLabelStyle}>Start date</span><span style={confirmValueStyle}>{startStr}</span></div>
             <div style={confirmRowStyle}><span style={confirmLabelStyle}>End date</span><span style={confirmValueStyle}>{endStr}</span></div>
           </div>
@@ -164,7 +172,7 @@ export default function NewProject() {
             priority: (values.priority as 'Low' | 'Medium' | 'High' | 'Urgent') ?? 'Medium',
             startDate: (start?.format?.('YYYY-MM-DD') ?? values.startDate) ?? '',
             endDate: (end?.format?.('YYYY-MM-DD') ?? values.endDate) ?? '',
-            status: String(values.status ?? 'Not Started'),
+            status,
             members,
             files: fileList.map((f, idx) => ({
               key: `new-file-${idx + 1}`,

@@ -1,10 +1,10 @@
 import { useMemo, useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Typography, Table, Tag, Button, Input, Select, DatePicker, Space, Card, Progress, Segmented, Row, Col, Empty, Tabs, Pagination, Checkbox } from 'antd'
+import { Typography, Table, Tag, Button, Input, Select, DatePicker, Space, Card, Progress, Segmented, Row, Col, Empty, Tabs, Pagination, Checkbox, message } from 'antd'
 import { EyeOutlined, PlusOutlined, SearchOutlined, UnorderedListOutlined, AppstoreOutlined, TeamOutlined, CheckSquareOutlined, FileOutlined, CommentOutlined, UserOutlined } from '@ant-design/icons'
 import type { Dayjs } from 'dayjs'
 import dayjs from 'dayjs'
-import { getProjectById, getProjectsList, getRelatedProjectsForMember, isProjectOverdue, type ProjectListRow, type ProjectDetail } from '../data/projects'
+import { getProjectById, getProjectsList, getRelatedProjectsForMember, isProjectOverdue, updateProjectById, type ProjectListRow, type ProjectDetail } from '../data/projects'
 import { useCurrentUser } from '../context/CurrentUserContext'
 
 const priorityColors: Record<string, string> = {
@@ -17,6 +17,27 @@ const priorityColors: Record<string, string> = {
 const PRIORITY_ORDER: Record<string, number> = { Urgent: 4, High: 3, Medium: 2, Low: 1 }
 function priorityRank(p: string): number {
   return PRIORITY_ORDER[p] ?? 0
+}
+
+/** Days from today to endDate; negative = overdue. Returns null if no end date. */
+function daysUntilEnd(endDate: string | undefined): number | null {
+  if (!endDate?.trim()) return null
+  const end = dayjs(endDate).startOf('day')
+  const today = dayjs().startOf('day')
+  return end.diff(today, 'day')
+}
+
+/** Days from today to startDate; positive = start is in the future. Returns null if no start date. */
+function daysUntilStart(startDate: string | undefined): number | null {
+  if (!startDate?.trim()) return null
+  const start = dayjs(startDate).startOf('day')
+  const today = dayjs().startOf('day')
+  return start.diff(today, 'day')
+}
+
+function formatShortDate(dateStr: string | undefined): string {
+  if (!dateStr?.trim()) return '—'
+  return dayjs(dateStr).format('MMM D, YYYY')
 }
 
 const sortOptions = [
@@ -36,6 +57,36 @@ const statusFilterOptions = [
   { value: 'Overdue', label: 'Overdue' },
   ...statusOptions,
 ]
+
+/** Allowed Kanban drag transitions: from status → list of statuses you can drop into. Prevents e.g. In Progress → Not Started, or moving Completed. */
+const ALLOWED_PROJECT_STATUS_FROM_TO: Record<string, string[]> = {
+  'Not Started': ['In Progress', 'On Hold'],
+  'In Progress': ['On Hold', 'Pending completion', 'Completed'],
+  'On Hold': ['Not Started', 'In Progress', 'Pending completion', 'Completed'],
+  'Pending completion': ['In Progress', 'Completed'],
+  'Completed': [], // cannot move a completed project to another column
+}
+
+function canMoveProjectToStatus(currentStatus: string, newStatus: string): boolean {
+  if (currentStatus === newStatus) return false
+  const allowed = ALLOWED_PROJECT_STATUS_FROM_TO[currentStatus]
+  return Array.isArray(allowed) && allowed.includes(newStatus)
+}
+
+const PROJECT_KANBAN_ORDER_KEY = 'echo_project_kanban_order'
+
+function reorderProjectsBy(projects: ProjectRow[], orderIds: string[]): ProjectRow[] {
+  if (!orderIds.length) return projects
+  const byId = new Map(projects.map((p) => [p.id, p]))
+  const ordered: ProjectRow[] = []
+  for (const id of orderIds) {
+    if (byId.has(id)) ordered.push(byId.get(id)!)
+  }
+  for (const p of projects) {
+    if (!orderIds.includes(p.id)) ordered.push(p)
+  }
+  return ordered
+}
 
 type ProjectRow = ProjectListRow
 
@@ -86,6 +137,133 @@ export default function Projects() {
   const KANBAN_INITIAL_COUNT = 40
   const KANBAN_LOAD_MORE = 20
   const [myProjectIds, setMyProjectIds] = useState<string[]>([])
+  const [projectDropTarget, setProjectDropTarget] = useState<string | null>(null)
+  const [projectColumnOrder, setProjectColumnOrder] = useState<Record<string, string[]>>(() => {
+    try {
+      const raw = localStorage.getItem(PROJECT_KANBAN_ORDER_KEY)
+      return raw ? JSON.parse(raw) : {}
+    } catch {
+      return {}
+    }
+  })
+  useEffect(() => {
+    try {
+      localStorage.setItem(PROJECT_KANBAN_ORDER_KEY, JSON.stringify(projectColumnOrder))
+    } catch {}
+  }, [projectColumnOrder])
+
+  const handleProjectDragStart = (e: React.DragEvent, projectId: string, sourceStatus: string) => {
+    e.dataTransfer.setData('application/x-echo-project-id', projectId)
+    e.dataTransfer.setData('application/x-echo-project-status', sourceStatus)
+    e.dataTransfer.effectAllowed = 'move'
+  }
+
+  const handleProjectDragOver = (e: React.DragEvent, status: string) => {
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'move'
+    setProjectDropTarget(status)
+  }
+
+  const handleProjectDragLeave = () => {
+    setProjectDropTarget(null)
+  }
+
+  const handleProjectDrop = async (e: React.DragEvent, newStatus: string) => {
+    e.preventDefault()
+    setProjectDropTarget(null)
+    const projectId = e.dataTransfer.getData('application/x-echo-project-id')
+    if (!projectId) return
+    const project = allProjects.find((p) => p.id === projectId)
+    if (!project || project.status === newStatus) return
+    if (!canMoveProjectToStatus(project.status, newStatus)) {
+      message.warning(`Cannot move a project from "${project.status}" to "${newStatus}".`)
+      return
+    }
+    // Only the project lead can set status to Pending completion; Super Admin/Admin see it and confirm from the project page.
+    if (newStatus === 'Pending completion') {
+      const detail = projectDetailsById[projectId]
+      const leadMemberId = detail?.members?.find((m: { role: string }) => m.role === 'Lead')?.memberId
+      if (leadMemberId !== currentUserMemberId) {
+        message.warning('Only the project lead can request completion (Pending completion). Use the project page to confirm or reject pending projects.')
+        return
+      }
+    }
+    const sourceStatus = project.status
+    try {
+      await updateProjectById(projectId, { status: newStatus })
+      const rows = await getProjectsList()
+      setAllProjects(rows)
+      const detail = await getProjectById(projectId)
+      if (detail) setProjectDetailsById((prev) => ({ ...prev, [projectId]: detail }))
+      setProjectColumnOrder((prev) => {
+        const next = { ...prev }
+        const fromList = next[sourceStatus]?.filter((id) => id !== projectId) ?? []
+        next[sourceStatus] = fromList
+        const inNew = next[newStatus] ?? []
+        if (!inNew.includes(projectId)) next[newStatus] = [...inNew, projectId]
+        return next
+      })
+      message.success(`Project status set to ${newStatus}.`)
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : 'Failed to update project status.')
+    }
+  }
+
+  const handleProjectDropOnCard = async (e: React.DragEvent, targetProjectId: string, targetStatus: string) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setProjectDropTarget(null)
+    const projectId = e.dataTransfer.getData('application/x-echo-project-id')
+    const sourceStatus = e.dataTransfer.getData('application/x-echo-project-status')
+    if (!projectId || projectId === targetProjectId) return
+    const project = allProjects.find((p) => p.id === projectId)
+    if (!project) return
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+    const dropInLowerHalf = e.clientY >= rect.top + rect.height / 2
+    if (sourceStatus === targetStatus) {
+      const col = projectKanbanColumns.find((c) => c.status === targetStatus)
+      const order = projectColumnOrder[targetStatus] ?? col?.projects.map((p) => p.id) ?? []
+      const without = order.filter((id) => id !== projectId)
+      const targetIndex = without.indexOf(targetProjectId)
+      const insertIndex = targetIndex === -1 ? without.length : (dropInLowerHalf ? targetIndex + 1 : targetIndex)
+      const newOrder = [...without.slice(0, insertIndex), projectId, ...without.slice(insertIndex)]
+      setProjectColumnOrder((prev) => ({ ...prev, [targetStatus]: newOrder }))
+      return
+    }
+    if (!canMoveProjectToStatus(project.status, targetStatus)) {
+      message.warning(`Cannot move a project from "${project.status}" to "${targetStatus}".`)
+      return
+    }
+    // Only the project lead can set status to Pending completion; Super Admin/Admin see it and confirm from the project page.
+    if (targetStatus === 'Pending completion') {
+      const detail = projectDetailsById[projectId]
+      const leadMemberId = detail?.members?.find((m: { role: string }) => m.role === 'Lead')?.memberId
+      if (leadMemberId !== currentUserMemberId) {
+        message.warning('Only the project lead can request completion (Pending completion). Use the project page to confirm or reject pending projects.')
+        return
+      }
+    }
+    try {
+      await updateProjectById(projectId, { status: targetStatus })
+      const rows = await getProjectsList()
+      setAllProjects(rows)
+      const detail = await getProjectById(projectId)
+      if (detail) setProjectDetailsById((prev) => ({ ...prev, [projectId]: detail }))
+      setProjectColumnOrder((prev) => {
+        const next = { ...prev }
+        const fromList = next[sourceStatus]?.filter((id) => id !== projectId) ?? []
+        next[sourceStatus] = fromList
+        const toList = next[targetStatus] ?? []
+        const targetIdx = toList.indexOf(targetProjectId)
+        const insertAt = targetIdx === -1 ? toList.length : (dropInLowerHalf ? targetIdx + 1 : targetIdx)
+        next[targetStatus] = [...toList.slice(0, insertAt), projectId, ...toList.slice(insertAt)]
+        return next
+      })
+      message.success(`Project status set to ${targetStatus}.`)
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : 'Failed to update project status.')
+    }
+  }
 
   useEffect(() => {
     let active = true
@@ -226,8 +404,29 @@ export default function Projects() {
         </Space>
       ),
     },
-    { title: 'Start Date', dataIndex: 'startDate', key: 'startDate', width: 110, render: (d: string) => d || '—' },
-    { title: 'End Date', dataIndex: 'endDate', key: 'endDate', width: 110, render: (d: string) => d || '—' },
+    { title: 'Started Date', dataIndex: 'startDate', key: 'startDate', width: 110, render: (d: string) => d || '—' },
+    {
+      title: 'Timeline',
+      dataIndex: 'endDate',
+      key: 'endDate',
+      width: 150,
+      render: (_: string, r: ProjectRow) => {
+        if (!r.endDate?.trim()) return 'No end date'
+        const daysToStart = daysUntilStart(r.startDate)
+        if (daysToStart !== null && daysToStart > 0) {
+          const label = daysToStart === 1 ? 'Starts tomorrow' : `Starts in ${daysToStart} days`
+          return <span style={{ color: '#1890ff', fontWeight: 500 }}>{label}</span>
+        }
+        const days = daysUntilEnd(r.endDate)
+        if (days === null) return 'No end date'
+        if (days < 0) {
+          const overdue = Math.abs(days)
+          const label = `${overdue} day${overdue !== 1 ? 's' : ''} overdue`
+          return <span style={{ color: '#ff4d4f', fontWeight: 500 }}>{label}</span>
+        }
+        return `${days} day${days !== 1 ? 's' : ''} left`
+      },
+    },
     {
       title: 'Tasks',
       key: 'tasks',
@@ -356,6 +555,7 @@ export default function Projects() {
                     dataSource={filteredProjects}
                     columns={columns}
                     size="small"
+                    scroll={{ x: 'max-content' }}
                     pagination={{
                       current: currentPage,
                       pageSize,
@@ -372,22 +572,28 @@ export default function Projects() {
                 ) : filteredProjects.length ? (
                   <div style={{ display: 'flex', gap: 16, overflowX: 'auto', paddingBottom: 8, minHeight: 400 }}>
                     {projectKanbanColumns.map((col) => {
+                      const sortedProjects = reorderProjectsBy(col.projects, projectColumnOrder[col.status] ?? [])
                       const visibleCount = kanbanVisibleCount[`all-${col.status}`] || KANBAN_INITIAL_COUNT
-                      const visibleProjects = col.projects.slice(0, visibleCount)
-                      const hasMore = col.projects.length > visibleCount
-                      const remaining = col.projects.length - visibleCount
+                      const visibleProjects = sortedProjects.slice(0, visibleCount)
+                      const hasMore = sortedProjects.length > visibleCount
+                      const remaining = sortedProjects.length - visibleCount
                       return (
                         <div
                           key={col.status}
+                          onDragOver={(e) => handleProjectDragOver(e, col.status)}
+                          onDragLeave={handleProjectDragLeave}
+                          onDrop={(e) => handleProjectDrop(e, col.status)}
                           style={{
                             flex: '0 0 280px',
                             minWidth: 280,
-                            background: '#f5f5f5',
+                            background: projectDropTarget === col.status ? '#e6f7ff' : '#f5f5f5',
                             borderRadius: 8,
                             padding: 12,
                             display: 'flex',
                             flexDirection: 'column',
                             maxHeight: 'calc(100vh - 280px)',
+                            border: projectDropTarget === col.status ? '2px dashed #1890ff' : undefined,
+                            transition: 'background 0.2s, border 0.2s',
                           }}
                         >
                           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, flexShrink: 0 }}>
@@ -404,8 +610,12 @@ export default function Projects() {
                                   key={p.id}
                                   size="small"
                                   hoverable
+                                  draggable
+                                  onDragStart={(e) => handleProjectDragStart(e, p.id, col.status)}
+                                  onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = 'move' }}
+                                  onDrop={(e) => handleProjectDropOnCard(e, p.id, col.status)}
                                   onClick={() => navigate(`/projects/${p.id}`)}
-                                  styles={{ body: { padding: 12 } }}
+                                  styles={{ body: { padding: 12 }, root: { cursor: 'grab' } }}
                                 >
                                   <Typography.Text strong style={{ display: 'block' }} ellipsis={{ tooltip: p.projectName }}>
                                     {p.projectName}
@@ -420,6 +630,28 @@ export default function Projects() {
                                     <span><TeamOutlined /> {membersCount}</span>
                                     <span><CheckSquareOutlined /> {tasksCount}</span>
                                   </Space>
+                                  <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 6 }}>
+                                    {(() => {
+                                      if (!p.endDate?.trim()) return 'No end date'
+                                      // If start date is in the future, show "Starts in X days" instead of "X days left"
+                                      const daysToStart = daysUntilStart(p.startDate)
+                                      if (daysToStart !== null && daysToStart > 0) {
+                                        const label = daysToStart === 1 ? 'Starts tomorrow' : `Starts in ${daysToStart} days`
+                                        return <span style={{ color: '#1890ff', fontWeight: 500 }}>{label}</span>
+                                      }
+                                      const days = daysUntilEnd(p.endDate)
+                                      if (days === null) return 'No end date'
+                                      if (days < 0) {
+                                        const overdue = Math.abs(days)
+                                        const label = `${overdue} day${overdue !== 1 ? 's' : ''} overdue`
+                                        return <span style={{ color: '#ff4d4f', fontWeight: 500 }}>{label}</span>
+                                      }
+                                      return `${days} day${days !== 1 ? 's' : ''} left`
+                                    })()}
+                                  </Typography.Text>
+                                  <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block' }}>
+                                    Created {formatShortDate(d?.createdAt)}
+                                  </Typography.Text>
                                   <Progress percent={p.progress} size="small" showInfo={false} style={{ marginTop: 6, marginBottom: 0 }} />
                                 </Card>
                               )
@@ -527,6 +759,7 @@ export default function Projects() {
                     dataSource={filteredProjects}
                     columns={columns}
                     size="small"
+                    scroll={{ x: 'max-content' }}
                     pagination={{
                       current: currentPage,
                       pageSize,
@@ -544,22 +777,28 @@ export default function Projects() {
                 ) : filteredProjects.length ? (
                   <div style={{ display: 'flex', gap: 16, overflowX: 'auto', paddingBottom: 8, minHeight: 400 }}>
                     {projectKanbanColumns.map((col) => {
+                      const sortedProjects = reorderProjectsBy(col.projects, projectColumnOrder[col.status] ?? [])
                       const visibleCount = kanbanVisibleCount[`my-${col.status}`] || KANBAN_INITIAL_COUNT
-                      const visibleProjects = col.projects.slice(0, visibleCount)
-                      const hasMore = col.projects.length > visibleCount
-                      const remaining = col.projects.length - visibleCount
+                      const visibleProjects = sortedProjects.slice(0, visibleCount)
+                      const hasMore = sortedProjects.length > visibleCount
+                      const remaining = sortedProjects.length - visibleCount
                       return (
                         <div
                           key={col.status}
+                          onDragOver={(e) => handleProjectDragOver(e, col.status)}
+                          onDragLeave={handleProjectDragLeave}
+                          onDrop={(e) => handleProjectDrop(e, col.status)}
                           style={{
                             flex: '0 0 280px',
                             minWidth: 280,
-                            background: '#f5f5f5',
+                            background: projectDropTarget === col.status ? '#e6f7ff' : '#f5f5f5',
                             borderRadius: 8,
                             padding: 12,
                             display: 'flex',
                             flexDirection: 'column',
                             maxHeight: 'calc(100vh - 280px)',
+                            border: projectDropTarget === col.status ? '2px dashed #1890ff' : undefined,
+                            transition: 'background 0.2s, border 0.2s',
                           }}
                         >
                           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, flexShrink: 0 }}>
@@ -576,8 +815,12 @@ export default function Projects() {
                                   key={p.id}
                                   size="small"
                                   hoverable
+                                  draggable
+                                  onDragStart={(e) => handleProjectDragStart(e, p.id, col.status)}
+                                  onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = 'move' }}
+                                  onDrop={(e) => handleProjectDropOnCard(e, p.id, col.status)}
                                   onClick={() => navigate(`/projects/${p.id}`)}
-                                  styles={{ body: { padding: 12 } }}
+                                  styles={{ body: { padding: 12 }, root: { cursor: 'grab' } }}
                                 >
                                   <Typography.Text strong style={{ display: 'block' }} ellipsis={{ tooltip: p.projectName }}>
                                     {p.projectName}
@@ -592,6 +835,27 @@ export default function Projects() {
                                     <span><TeamOutlined /> {membersCount}</span>
                                     <span><CheckSquareOutlined /> {tasksCount}</span>
                                   </Space>
+                                  <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 6 }}>
+                                    {(() => {
+                                      if (!p.endDate?.trim()) return 'No end date'
+                                      const daysToStart = daysUntilStart(p.startDate)
+                                      if (daysToStart !== null && daysToStart > 0) {
+                                        const label = daysToStart === 1 ? 'Starts tomorrow' : `Starts in ${daysToStart} days`
+                                        return <span style={{ color: '#1890ff', fontWeight: 500 }}>{label}</span>
+                                      }
+                                      const days = daysUntilEnd(p.endDate)
+                                      if (days === null) return 'No end date'
+                                      if (days < 0) {
+                                        const overdue = Math.abs(days)
+                                        const label = `${overdue} day${overdue !== 1 ? 's' : ''} overdue`
+                                        return <span style={{ color: '#ff4d4f', fontWeight: 500 }}>{label}</span>
+                                      }
+                                      return `${days} day${days !== 1 ? 's' : ''} left`
+                                    })()}
+                                  </Typography.Text>
+                                  <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block' }}>
+                                    Created {formatShortDate(d?.createdAt)}
+                                  </Typography.Text>
                                   <Progress percent={p.progress} size="small" showInfo={false} style={{ marginTop: 6, marginBottom: 0 }} />
                                 </Card>
                               )

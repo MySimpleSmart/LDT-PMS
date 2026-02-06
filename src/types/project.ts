@@ -66,4 +66,6 @@ export interface ProjectTask {
   endDate?: string
   /** Comments/notes on the task (persisted in project document) */
   notes?: ProjectTaskNote[]
+   /** When the task was marked as Completed (ISO string). Used for \"days before completed\". */
+  completedAt?: string
 }

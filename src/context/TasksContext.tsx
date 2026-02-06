@@ -42,6 +42,7 @@ export function TasksProvider({ children }: { children: React.ReactNode }) {
       assignees: task.assignees,
       startDate: task.startDate,
       endDate: task.endDate,
+      completedAt: task.completedAt,
       notes: task.notes?.length ? task.notes : undefined,
     })
     setTasks((prev) => [...prev, created])
@@ -58,6 +59,7 @@ export function TasksProvider({ children }: { children: React.ReactNode }) {
       startDate: updates.startDate,
       endDate: updates.endDate,
       assignees: updates.assignees,
+      completedAt: updates.completedAt,
     })
   }, [])
 

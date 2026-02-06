@@ -28,4 +28,6 @@ export interface Task {
   /** @deprecated Use assignees */
   assigneeName?: string
   notes?: TaskNote[]
+  /** When the task was marked as Completed (ISO string). Used for \"days before completed\". */
+  completedAt?: string
 }

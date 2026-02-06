@@ -32,6 +32,7 @@ export async function flattenTasksFromProjects(): Promise<Task[]> {
         status: t.status,
         startDate: t.startDate,
         endDate: t.endDate,
+        completedAt: t.completedAt,
         assignees: assignees.length ? assignees : undefined,
         assigneeMemberId: t.assigneeMemberId,
         assigneeName: t.assigneeName,
@@ -71,6 +72,7 @@ export type AddTaskToProjectPayload = {
   startDate?: string
   endDate?: string
   notes?: { key: string; author: string; content: string; createdAt: string }[]
+  completedAt?: string
 }
 
 /** Strip undefined values from an object (Firestore rejects undefined). */
@@ -96,6 +98,7 @@ export async function persistAddTask(projectDocId: string, payload: AddTaskToPro
   if (payload.startDate != null && payload.startDate !== '') newProjectTask.startDate = payload.startDate
   if (payload.endDate != null && payload.endDate !== '') newProjectTask.endDate = payload.endDate
   if (payload.notes != null && payload.notes.length > 0) newProjectTask.notes = payload.notes
+  if (payload.completedAt != null && payload.completedAt !== '') newProjectTask.completedAt = payload.completedAt
   const sanitizedTasks = [...project.tasks.map((t) => stripUndefined(t as Record<string, unknown>)), newProjectTask]
   await updateProjectById(projectDocId, { tasks: sanitizedTasks })
   return {
@@ -106,6 +109,7 @@ export async function persistAddTask(projectDocId: string, payload: AddTaskToPro
     status: newProjectTask.status,
     startDate: newProjectTask.startDate,
     endDate: newProjectTask.endDate,
+    completedAt: newProjectTask.completedAt as string | undefined,
     assignees: newProjectTask.assignees,
     notes: newProjectTask.notes ?? [],
   }
@@ -118,6 +122,7 @@ export type UpdateTaskPayload = {
   startDate?: string
   endDate?: string
   assignees?: { memberId: string; name: string }[]
+  completedAt?: string
 }
 
 /** Persist task field updates to the project document in Firestore. taskId must be "projectDocId-taskKey". */
@@ -137,6 +142,7 @@ export async function persistUpdateTask(taskId: string, updates: UpdateTaskPaylo
       startDate: updates.startDate !== undefined ? updates.startDate : t.startDate,
       endDate: updates.endDate !== undefined ? updates.endDate : t.endDate,
       assignees: updates.assignees !== undefined ? updates.assignees : t.assignees,
+      completedAt: updates.completedAt !== undefined ? updates.completedAt : t.completedAt,
     }
     return stripUndefined(merged)
   })

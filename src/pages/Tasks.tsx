@@ -45,6 +45,35 @@ const taskStatusFilterOptions = [
 ]
 
 const TASK_KANBAN_STATUSES = ['To do', 'In progress', 'Completed']
+const TASK_KANBAN_ORDER_KEY = 'echo_task_kanban_order'
+
+/** Reorder tasks by a list of ids (ids first in that order, then any task not in the list). */
+function reorderTasksBy(tasks: Task[], orderIds: string[]): Task[] {
+  if (!orderIds.length) return tasks
+  const byId = new Map(tasks.map((t) => [t.id, t]))
+  const ordered: Task[] = []
+  for (const id of orderIds) {
+    if (byId.has(id)) ordered.push(byId.get(id)!)
+  }
+  for (const t of tasks) {
+    if (!orderIds.includes(t.id)) ordered.push(t)
+  }
+  return ordered
+}
+
+/** Allowed Kanban drag: from status → list of statuses you can drop into. e.g. Completed can only go to In progress (reopen), not To do. */
+const ALLOWED_TASK_STATUS_FROM_TO: Record<string, string[]> = {
+  'To do': ['In progress', 'Completed'],
+  'In progress': ['To do', 'Completed'],
+  'Completed': ['In progress'], // reopen only to In progress, not back to To do
+}
+
+function canMoveTaskToStatus(currentStatus: string, newStatus: string): boolean {
+  if (currentStatus === newStatus) return false
+  const allowed = ALLOWED_TASK_STATUS_FROM_TO[currentStatus]
+  return Array.isArray(allowed) && allowed.includes(newStatus)
+}
+
 function taskStatusTagColor(s: string): string {
   if (s === 'Completed') return 'green'
   if (s === 'In progress') return 'blue'
@@ -71,6 +100,22 @@ function excerpt(text: string, max = 60) {
   const t = text.trim()
   if (t.length <= max) return t
   return `${t.slice(0, Math.max(0, max - 1))}…`
+}
+
+/** Days from today to endDate; negative = overdue. Returns null if no end date. */
+function daysUntilEnd(endDate: string | undefined): number | null {
+  if (!endDate?.trim()) return null
+  const end = dayjs(endDate).startOf('day')
+  const today = dayjs().startOf('day')
+  return end.diff(today, 'day')
+}
+
+/** Days from today to startDate; positive = start is in the future. Returns null if no start date. */
+function daysUntilStart(startDate: string | undefined): number | null {
+  if (!startDate?.trim()) return null
+  const start = dayjs(startDate).startOf('day')
+  const today = dayjs().startOf('day')
+  return start.diff(today, 'day')
 }
 
 export default function Tasks() {
@@ -142,6 +187,20 @@ export default function Tasks() {
   const [currentPage, setCurrentPage] = useState(1)
   const [pageSize, setPageSize] = useState(10)
   const [kanbanVisibleCount, setKanbanVisibleCount] = useState<Record<string, number>>({})
+  const [taskDropTarget, setTaskDropTarget] = useState<string | null>(null)
+  const [taskColumnOrder, setTaskColumnOrder] = useState<Record<string, string[]>>(() => {
+    try {
+      const raw = localStorage.getItem(TASK_KANBAN_ORDER_KEY)
+      return raw ? JSON.parse(raw) : {}
+    } catch {
+      return {}
+    }
+  })
+  useEffect(() => {
+    try {
+      localStorage.setItem(TASK_KANBAN_ORDER_KEY, JSON.stringify(taskColumnOrder))
+    } catch {}
+  }, [taskColumnOrder])
   const KANBAN_INITIAL_COUNT = 40
   const KANBAN_LOAD_MORE = 20
   const [editDrawerOpen, setEditDrawerOpen] = useState(false)
@@ -412,7 +471,7 @@ export default function Tasks() {
         cancelText: 'Cancel',
         onOk: async () => {
           try {
-            await updateTask(r.id, { status: 'Completed' })
+            await updateTask(r.id, { status: 'Completed', completedAt: new Date().toISOString() })
             message.success('Task marked as completed.')
           } catch (err) {
             message.error(err instanceof Error ? err.message : 'Failed to update task.')
@@ -443,6 +502,113 @@ export default function Tasks() {
       })
     },
     [canEditTask, updateTask]
+  )
+
+  const handleTaskDragStart = useCallback((e: React.DragEvent, taskId: string, sourceStatus: string) => {
+    e.dataTransfer.setData('application/x-echo-task-id', taskId)
+    e.dataTransfer.setData('application/x-echo-task-status', sourceStatus)
+    e.dataTransfer.effectAllowed = 'move'
+  }, [])
+
+  const handleTaskDragOver = useCallback((e: React.DragEvent, status: string) => {
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'move'
+    setTaskDropTarget(status)
+  }, [])
+
+  const handleTaskDragLeave = useCallback(() => {
+    setTaskDropTarget(null)
+  }, [])
+
+  const handleTaskDrop = useCallback(
+    async (e: React.DragEvent, newStatus: string) => {
+      e.preventDefault()
+      setTaskDropTarget(null)
+      const taskId = e.dataTransfer.getData('application/x-echo-task-id')
+      if (!taskId) return
+      const task = tasks.find((t) => t.id === taskId)
+      if (!task || task.status === newStatus) return
+      if (!canEditTask(task)) {
+        message.error('You cannot change this task’s status.')
+        return
+      }
+      const fromStatus = task.status === 'Pending completion' ? 'In progress' : task.status
+      if (!canMoveTaskToStatus(fromStatus, newStatus)) {
+        message.warning(`Cannot move a task from "${fromStatus}" to "${newStatus}".`)
+        return
+      }
+      try {
+        const updates: Partial<Omit<Task, 'id' | 'notes'>> = { status: newStatus }
+        if (newStatus === 'Completed' && fromStatus !== 'Completed') {
+          updates.completedAt = new Date().toISOString()
+        }
+        await updateTask(taskId, updates)
+        setTaskColumnOrder((prev) => {
+          const next = { ...prev }
+          const current = next[fromStatus]?.filter((id) => id !== taskId) ?? []
+          next[fromStatus] = current
+          const inNew = next[newStatus] ?? []
+          if (!inNew.includes(taskId)) next[newStatus] = [...inNew, taskId]
+          return next
+        })
+        message.success(`Task status set to ${newStatus}.`)
+      } catch (err) {
+        message.error(err instanceof Error ? err.message : 'Failed to update task status.')
+      }
+    },
+    [tasks, canEditTask, updateTask]
+  )
+
+  const handleTaskDropOnCard = useCallback(
+    async (e: React.DragEvent, targetTaskId: string, targetStatus: string) => {
+      e.preventDefault()
+      e.stopPropagation()
+      setTaskDropTarget(null)
+      const taskId = e.dataTransfer.getData('application/x-echo-task-id')
+      const sourceStatus = e.dataTransfer.getData('application/x-echo-task-status')
+      if (!taskId || taskId === targetTaskId) return
+      const task = tasks.find((t) => t.id === taskId)
+      if (!task || !canEditTask(task)) return
+      const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+      const dropInLowerHalf = e.clientY >= rect.top + rect.height / 2
+      if (sourceStatus === targetStatus) {
+        const col = taskKanbanColumns.find((c) => c.status === targetStatus)
+        const order = taskColumnOrder[targetStatus] ?? col?.tasks.map((t) => t.id) ?? []
+        const without = order.filter((id) => id !== taskId)
+        const targetIndex = without.indexOf(targetTaskId)
+        const insertIndex = targetIndex === -1 ? without.length : (dropInLowerHalf ? targetIndex + 1 : targetIndex)
+        const newOrder = [...without.slice(0, insertIndex), taskId, ...without.slice(insertIndex)]
+        setTaskColumnOrder((prev) => ({ ...prev, [targetStatus]: newOrder }))
+        return
+      }
+      const fromStatus = task.status === 'Pending completion' ? 'In progress' : task.status
+      if (!canMoveTaskToStatus(fromStatus, targetStatus)) {
+        message.warning(`Cannot move a task from "${fromStatus}" to "${targetStatus}".`)
+        return
+      }
+      try {
+        const updates: Partial<Omit<Task, 'id' | 'notes'>> = { status: targetStatus }
+        if (targetStatus === 'Completed' && fromStatus !== 'Completed') {
+          updates.completedAt = new Date().toISOString()
+        }
+        await updateTask(taskId, updates)
+        setTaskColumnOrder((prev) => {
+          const next = { ...prev }
+          const fromList = next[sourceStatus]?.filter((id) => id !== taskId) ?? []
+          next[sourceStatus] = fromList
+          const toList = next[targetStatus] ?? []
+          const targetIdx = toList.indexOf(targetTaskId)
+          const insertAt = targetIdx === -1 ? toList.length : (dropInLowerHalf ? targetIdx + 1 : targetIdx)
+          const newToList = [...toList.slice(0, insertAt), taskId, ...toList.slice(insertAt)]
+          next[targetStatus] = newToList
+          return next
+        })
+        message.success(`Task status set to ${targetStatus}.`)
+      } catch (err) {
+        message.error(err instanceof Error ? err.message : 'Failed to update task status.')
+      }
+    },
+    [tasks, canEditTask, updateTask, taskColumnOrder, taskKanbanColumns]
   )
 
   const handleRemoveTask = useCallback(
@@ -537,8 +703,42 @@ export default function Tasks() {
         )
       },
     },
-    { title: 'Start Date', dataIndex: 'startDate', key: 'startDate', width: 110, render: (d: string) => d || '—' },
-    { title: 'End Date', dataIndex: 'endDate', key: 'endDate', width: 110, render: (d: string) => d || '—' },
+    { title: 'Started Date', dataIndex: 'startDate', key: 'startDate', width: 110, render: (d: string) => d || '—' },
+    {
+      title: 'Timeline',
+      dataIndex: 'endDate',
+      key: 'endDate',
+      width: 150,
+      render: (_: string, t: Task) => {
+        if (!t.endDate?.trim()) return 'No end date'
+        const end = dayjs(t.endDate).startOf('day')
+        if (t.status === 'Completed') {
+          const completed = dayjs(t.completedAt || new Date().toISOString()).startOf('day')
+          const daysAtCompletion = end.diff(completed, 'day')
+          if (daysAtCompletion > 0) {
+            return `${daysAtCompletion} day${daysAtCompletion !== 1 ? 's' : ''} before completed`
+          }
+          if (daysAtCompletion === 0) {
+            return 'Completed on due date'
+          }
+          const overdueAtCompletion = Math.abs(daysAtCompletion)
+          return `${overdueAtCompletion} day${overdueAtCompletion !== 1 ? 's' : ''} after due date`
+        }
+        const daysToStart = daysUntilStart(t.startDate)
+        if (daysToStart !== null && daysToStart > 0) {
+          const label = daysToStart === 1 ? 'Starts tomorrow' : `Starts in ${daysToStart} days`
+          return <span style={{ color: '#1890ff', fontWeight: 500 }}>{label}</span>
+        }
+        const days = daysUntilEnd(t.endDate)
+        if (days === null) return 'No end date'
+        if (days < 0) {
+          const overdue = Math.abs(days)
+          const label = `${overdue} day${overdue !== 1 ? 's' : ''} overdue`
+          return <span style={{ color: '#ff4d4f', fontWeight: 500 }}>{label}</span>
+        }
+        return `${days} day${days !== 1 ? 's' : ''} left`
+      },
+    },
     {
       title: 'Notes',
       key: 'notes',
@@ -636,22 +836,28 @@ export default function Tasks() {
     filteredTasks.length ? (
       <div style={{ display: 'flex', gap: 16, overflowX: 'auto', paddingBottom: 8, minHeight: 400 }}>
         {taskKanbanColumns.map((col) => {
+          const sortedTasks = reorderTasksBy(col.tasks, taskColumnOrder[col.status] ?? [])
           const visibleCount = kanbanVisibleCount[col.status] || KANBAN_INITIAL_COUNT
-          const visibleTasks = col.tasks.slice(0, visibleCount)
-          const hasMore = col.tasks.length > visibleCount
-          const remaining = col.tasks.length - visibleCount
+          const visibleTasks = sortedTasks.slice(0, visibleCount)
+          const hasMore = sortedTasks.length > visibleCount
+          const remaining = sortedTasks.length - visibleCount
           return (
             <div
               key={col.status}
+              onDragOver={(e) => handleTaskDragOver(e, col.status)}
+              onDragLeave={handleTaskDragLeave}
+              onDrop={(e) => handleTaskDrop(e, col.status)}
               style={{
                 flex: '0 0 280px',
                 minWidth: 280,
-                background: '#f5f5f5',
+                background: taskDropTarget === col.status ? '#e6f7ff' : '#f5f5f5',
                 borderRadius: 8,
                 padding: 12,
                 display: 'flex',
                 flexDirection: 'column',
                 maxHeight: 'calc(100vh - 280px)',
+                border: taskDropTarget === col.status ? '2px dashed #1890ff' : undefined,
+                transition: 'background 0.2s, border 0.2s',
               }}
             >
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, flexShrink: 0 }}>
@@ -661,13 +867,18 @@ export default function Tasks() {
               <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
                 {visibleTasks.map((t) => {
                   const assignees = getTaskAssignees(t)
+                  const editable = canEditTask(t)
                   return (
                     <Card
                       key={t.id}
                       size="small"
-                      hoverable={canEditTask(t)}
-                      onClick={canEditTask(t) ? () => openEditDrawer(t.id) : undefined}
-                      styles={{ body: { padding: 12 } }}
+                      hoverable={editable}
+                      draggable={editable}
+                      onDragStart={editable ? (e) => handleTaskDragStart(e, t.id, col.status) : undefined}
+                      onDragOver={editable ? (e) => { e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = 'move' } : undefined}
+                      onDrop={editable ? (e) => handleTaskDropOnCard(e, t.id, col.status) : undefined}
+                      onClick={editable ? () => openEditDrawer(t.id) : undefined}
+                      styles={{ body: { padding: 12 }, root: editable ? { cursor: 'grab' } : undefined }}
                     >
                       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
                         <Typography.Text strong style={{ display: 'block', minWidth: 0 }} ellipsis={{ tooltip: t.taskName }}>
@@ -694,10 +905,38 @@ export default function Tasks() {
                           ))}
                         </Space>
                       )}
-                      <Space size={8} style={{ marginTop: 6, fontSize: 12, color: 'rgba(0,0,0,0.65)' }}>
-                        <span>Start: {t.startDate ?? '—'}</span>
-                        <span>End: {t.endDate ?? '—'}</span>
-                      </Space>
+                      <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 6 }}>
+                        {(() => {
+                          if (!t.endDate?.trim()) return 'No end date'
+                          const end = dayjs(t.endDate).startOf('day')
+                          if (t.status === 'Completed') {
+                            const completed = dayjs(t.completedAt || new Date().toISOString()).startOf('day')
+                            const daysAtCompletion = end.diff(completed, 'day')
+                            if (daysAtCompletion > 0) {
+                              return `${daysAtCompletion} day${daysAtCompletion !== 1 ? 's' : ''} before completed`
+                            }
+                            if (daysAtCompletion === 0) {
+                              return 'Completed on due date'
+                            }
+                            const overdue = Math.abs(daysAtCompletion)
+                            return `${overdue} day${overdue !== 1 ? 's' : ''} after due date`
+                          }
+                          // If start date is in the future, show "Starts in X days" instead of "X days left"
+                          const daysToStart = daysUntilStart(t.startDate)
+                          if (daysToStart !== null && daysToStart > 0) {
+                            const label = daysToStart === 1 ? 'Starts tomorrow' : `Starts in ${daysToStart} days`
+                            return <span style={{ color: '#1890ff', fontWeight: 500 }}>{label}</span>
+                          }
+                          const days = daysUntilEnd(t.endDate)
+                          if (days === null) return 'No end date'
+                          if (days < 0) {
+                            const overdue = Math.abs(days)
+                            const label = `${overdue} day${overdue !== 1 ? 's' : ''} overdue`
+                            return <span style={{ color: '#ff4d4f', fontWeight: 500 }}>{label}</span>
+                          }
+                          return `${days} day${days !== 1 ? 's' : ''} left`
+                        })()}
+                      </Typography.Text>
                     </Card>
                   )
                 })}
@@ -744,6 +983,7 @@ export default function Tasks() {
               dataSource={filteredTasks}
               columns={columns}
               size="small"
+              scroll={{ x: 'max-content' }}
               pagination={{
                 current: currentPage,
                 pageSize,
@@ -785,6 +1025,7 @@ export default function Tasks() {
               dataSource={filteredTasks}
               columns={columns}
               size="small"
+              scroll={{ x: 'max-content' }}
               pagination={{
                 current: currentPage,
                 pageSize,

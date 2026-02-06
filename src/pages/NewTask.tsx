@@ -167,6 +167,7 @@ export default function NewTask() {
       startDate,
       endDate,
       assignees: assignees.length ? assignees : undefined,
+      completedAt: status === 'Completed' ? new Date().toISOString() : undefined,
       notes,
     }
 
