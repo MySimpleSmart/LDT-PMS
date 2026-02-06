@@ -6,80 +6,60 @@ import {
   onAuthStateChanged,
   type User,
 } from 'firebase/auth'
-import { initFirebase, isFirebaseConfigured } from '../lib/firebase'
-
-/** Demo users when Firebase is not configured */
-const DEMO_PASSWORD = '123'
-
-export type UserRole = 'admin' | 'member'
-
-export type AuthUser = User | { uid: 'demo'; email: string; role?: UserRole; adminId?: string; memberId?: string }
+import { initFirebase } from '../lib/firebase'
 
 type AuthContextValue = {
-  user: AuthUser | null
+  currentUser: User | null
   loading: boolean
+  isAuthenticated: boolean
   signIn: (email: string, password: string) => Promise<void>
   signOut: () => Promise<void>
   error: string | null
   clearError: () => void
-  userRole: UserRole | null
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null)
 
-function getDemoLogin(email: string, password: string): { role: UserRole; adminId?: string; memberId?: string } | null {
-  if (password !== DEMO_PASSWORD) return null
-  const normalized = email.trim().toLowerCase()
-  if (normalized === 'admin' || normalized === 'admin@test.com') return { role: 'admin', adminId: '1' }
-  if (normalized === 'alex' || normalized === 'alex.river@company.com') return { role: 'admin', adminId: '2' }
-  if (normalized === 'projectlead' || normalized === 'lead' || normalized === 'projectlead@test.com' || normalized === 'noah.wilson@company.com') return { role: 'member', memberId: 'LDA0006' }
-  return null
-}
-
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<AuthUser | null>(null)
+  const [currentUser, setCurrentUser] = useState<User | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     let unsubscribe: (() => void) | undefined
-    const stopLoading = () => setLoading(false)
-    const timeoutId = setTimeout(stopLoading, 3000)
+    let isMounted = true
 
-    try {
-      initFirebase()
-      const auth = getAuth()
-      unsubscribe = onAuthStateChanged(auth, (nextUser) => {
-        setUser(nextUser)
-        stopLoading()
-      })
-    } catch {
-      stopLoading()
-    }
+    ;(async () => {
+      try {
+        // Initialize Firebase app and subscribe to auth state
+        initFirebase()
+        const auth = getAuth()
+        unsubscribe = onAuthStateChanged(auth, (nextUser) => {
+          if (!isMounted) return
+          setCurrentUser(nextUser)
+          setLoading(false)
+        })
+      } catch (err) {
+        // If Firebase isn't configured correctly, surface a generic error
+        // but don't fall back to any demo users.
+        // eslint-disable-next-line no-console
+        console.error('Failed to initialize Firebase Auth', err)
+        if (isMounted) {
+          setError('Authentication is not available. Please check Firebase configuration.')
+          setCurrentUser(null)
+          setLoading(false)
+        }
+      }
+    })()
 
     return () => {
-      clearTimeout(timeoutId)
+      isMounted = false
       unsubscribe?.()
     }
   }, [])
 
   const signIn = useCallback(async (email: string, password: string) => {
     setError(null)
-    const demo = getDemoLogin(email, password)
-    if (demo) {
-      setUser({
-        uid: 'demo',
-        email: email.trim() || (demo.memberId ? 'noah.wilson@company.com' : demo.adminId === '2' ? 'alex' : 'admin'),
-        role: demo.role,
-        adminId: demo.adminId,
-        memberId: demo.memberId,
-      })
-      return
-    }
-    if (!isFirebaseConfigured()) {
-      setError('Demo: admin/123 (Super Admin), projectlead/123 (Project Lead), alex/123 (Admin). Configure Firebase for real login.')
-      throw new Error('Demo credentials only')
-    }
     const auth = getAuth()
     try {
       await signInWithEmailAndPassword(auth, email, password)
@@ -94,29 +74,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signOut = useCallback(async () => {
     setError(null)
-    setUser(null)
-    if (isFirebaseConfigured()) {
-      try {
-        const auth = getAuth()
-        await firebaseSignOut(auth)
-      } catch {
-        // ignore if not signed in via Firebase
-      }
+    try {
+      const auth = getAuth()
+      await firebaseSignOut(auth)
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('Error signing out', err)
+    } finally {
+      setCurrentUser(null)
     }
   }, [])
 
   const clearError = useCallback(() => setError(null), [])
 
-  const userRole: UserRole | null = user ? ((user as { role?: UserRole }).role ?? 'admin') : null
-
   const value: AuthContextValue = {
-    user,
+    currentUser,
     loading,
+    isAuthenticated: !!currentUser,
     signIn,
     signOut,
     error,
     clearError,
-    userRole,
   }
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

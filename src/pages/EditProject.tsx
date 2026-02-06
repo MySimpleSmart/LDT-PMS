@@ -1,8 +1,8 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { Card, Form, Input, Select, Button, Space, Typography, message, Row, Col, DatePicker } from 'antd'
 import { ArrowLeftOutlined } from '@ant-design/icons'
-import { getProjectById } from '../data/projects'
+import { getProjectById, type ProjectDetail, updateProjectById } from '../data/projects'
 import { useProjectMeta } from '../context/ProjectMetaContext'
 import { useCurrentUser } from '../context/CurrentUserContext'
 import dayjs from 'dayjs'
@@ -27,7 +27,7 @@ export default function EditProject() {
   const navigate = useNavigate()
   const { isSuperAdmin } = useCurrentUser()
   const [form] = Form.useForm()
-  const project = id ? getProjectById(id) : null
+  const [project, setProject] = useState<ProjectDetail | null>(null)
   const { categories, tags } = useProjectMeta()
 
   const categoryOptions = categories.map((c) => ({ value: c, label: c }))
@@ -36,6 +36,27 @@ export default function EditProject() {
   useEffect(() => {
     if (!isSuperAdmin) navigate('/projects', { replace: true })
   }, [isSuperAdmin, navigate])
+
+  useEffect(() => {
+    let active = true
+    if (!id) {
+      setProject(null)
+      return
+    }
+    ;(async () => {
+      try {
+        const detail = await getProjectById(id)
+        if (active) setProject(detail)
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error('Failed to load project for EditProject', err)
+        if (active) setProject(null)
+      }
+    })()
+    return () => {
+      active = false
+    }
+  }, [id])
 
   useEffect(() => {
     if (project) {
@@ -52,12 +73,29 @@ export default function EditProject() {
     }
   }, [project, form])
 
-  const onFinish = (values: Record<string, unknown>) => {
+  const onFinish = async (values: Record<string, unknown>) => {
     const start = values.startDate as { format?: (s: string) => string } | undefined
     const end = values.endDate as { format?: (s: string) => string } | undefined
     const tagVal = values.projectTag
     const tagStr = Array.isArray(tagVal) ? (tagVal as string[]).join(', ') : String(tagVal ?? '')
-    console.log('Update project:', id, { ...values, projectTag: tagStr, startDate: start?.format?.('YYYY-MM-DD'), endDate: end?.format?.('YYYY-MM-DD') })
+    if (id && project) {
+      try {
+        await updateProjectById(id, {
+          projectName: String(values.projectName ?? ''),
+          projectCategory: String(values.projectCategory ?? ''),
+          projectTag: tagStr,
+          priority: values.priority as 'Low' | 'Medium' | 'High' | 'Urgent',
+          status: values.status as 'Not Started' | 'In Progress' | 'On Hold' | 'Pending completion' | 'Completed',
+          startDate: start?.format?.('YYYY-MM-DD') ?? '',
+          endDate: end?.format?.('YYYY-MM-DD') ?? '',
+        })
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error('Failed to update project', err)
+        message.error('Failed to update project.')
+        return
+      }
+    }
     message.success('Project updated successfully.')
     navigate(`/projects/${id}`)
   }

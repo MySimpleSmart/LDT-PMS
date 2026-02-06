@@ -28,7 +28,7 @@ import type { Dayjs } from 'dayjs'
 import dayjs from 'dayjs'
 import { useTasks } from '../context/TasksContext'
 import { useCurrentUser } from '../context/CurrentUserContext'
-import { getProjectsList, getProjectById, getMemberIdsWhoAreProjectLeads } from '../data/projects'
+import { getProjectsList, getProjectById, type ProjectListRow, type ProjectDetail } from '../data/projects'
 import { getTaskAssignees } from '../data/tasks'
 import type { Task } from '../types/task'
 
@@ -70,11 +70,40 @@ function excerpt(text: string, max = 60) {
 export default function Tasks() {
   const navigate = useNavigate()
   const { tasks, getTaskById, updateTask, addTaskNote } = useTasks()
-  const { currentAdminId, currentMember, isSuperAdmin, currentUserMemberId, displayName } = useCurrentUser()
+  const { currentAdminId, currentMember, isSuperAdmin, currentUserMemberId, displayName, isProjectLead } = useCurrentUser()
   const canConfirmRejectPending = (isSuperAdmin || currentAdminId) && !currentMember
-  const projects = getProjectsList()
-  const isProjectLead = Boolean(currentUserMemberId && getMemberIdsWhoAreProjectLeads().map((id) => id.toUpperCase()).includes(currentUserMemberId.toUpperCase()))
+  const [projects, setProjects] = useState<ProjectListRow[]>([])
+  const [projectDetailsById, setProjectDetailsById] = useState<Record<string, ProjectDetail>>({})
   const showAddTask = isSuperAdmin || (currentAdminId && !currentMember) || isProjectLead
+
+  useEffect(() => {
+    let active = true
+    ;(async () => {
+      try {
+        const rows = await getProjectsList()
+        if (!active) return
+        setProjects(rows)
+
+        const details: Record<string, ProjectDetail> = {}
+        for (const row of rows) {
+          try {
+            const detail = await getProjectById(row.id)
+            if (detail) details[row.id] = detail
+          } catch (err) {
+            // eslint-disable-next-line no-console
+            console.error('Failed to load project detail', row.id, err)
+          }
+        }
+        if (active) setProjectDetailsById(details)
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error('Failed to load projects for Tasks page', err)
+      }
+    })()
+    return () => {
+      active = false
+    }
+  }, [])
 
   /** Project Lead may only edit/complete tasks in projects they lead (and that project’s member tasks). Not other projects. Super Admin/Admin may edit any task. */
   const canEditTask = useCallback(
@@ -83,7 +112,7 @@ export default function Tasks() {
       if (currentAdminId && !currentMember) return true
       if (!currentUserMemberId) return false
       const projectRow = projects.find((p) => p.projectId === t.projectId)
-      const detail = projectRow ? getProjectById(projectRow.id) : null
+      const detail = projectRow ? projectDetailsById[projectRow.id] ?? null : null
       const projectLeadMemberId = detail?.members.find((m) => m.role === 'Lead')?.memberId
       return projectLeadMemberId === currentUserMemberId
     },
@@ -109,7 +138,7 @@ export default function Tasks() {
   const task = selectedTaskId ? getTaskById(selectedTaskId) : undefined
   const projectOptions = projects.map((p) => ({ value: p.id, label: `${p.projectId} – ${p.projectName}` }))
   const selectedProjectId = Form.useWatch('projectId', editForm)
-  const projectDetail = selectedProjectId ? getProjectById(selectedProjectId) : null
+  const projectDetail = selectedProjectId ? projectDetailsById[selectedProjectId] ?? null : null
   const assigneeOptions = projectDetail
     ? projectDetail.members.map((m) => ({ value: m.memberId, label: `${m.name} (${m.role})` }))
     : []
@@ -198,7 +227,7 @@ export default function Tasks() {
       return
     }
     const projectId = values.projectId as string
-    const project = projectId ? getProjectById(projectId) : null
+    const project = projectId ? projectDetailsById[projectId] ?? null : null
     if (!project) {
       message.error('Please select a project.')
       return

@@ -7,7 +7,7 @@ type Props = {
 }
 
 export default function ProtectedRoute({ children }: Props) {
-  const { user, loading } = useAuth()
+  const { currentUser, loading, isAuthenticated } = useAuth()
   const location = useLocation()
 
   if (loading) {
@@ -29,7 +29,7 @@ export default function ProtectedRoute({ children }: Props) {
     )
   }
 
-  if (!user) {
+  if (!isAuthenticated || !currentUser) {
     return <Navigate to="/login" state={{ from: location }} replace />
   }
 

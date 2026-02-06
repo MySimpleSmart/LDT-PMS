@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Typography, Row, Col, Card, Space, Button, List, Tag, Progress } from 'antd'
 import {
@@ -13,10 +13,10 @@ import {
 } from '@ant-design/icons'
 import { useNotes } from '../context/NotesContext'
 import { useCurrentUser } from '../context/CurrentUserContext'
-import { getProjectsList } from '../data/projects'
-import { getMemberIdsWhoAreProjectLeads } from '../data/projects'
+import { getProjectsList, type ProjectListRow } from '../data/projects'
 import { getMembersList } from '../data/members'
 import { flattenTasksFromProjects } from '../data/tasks'
+import type { Task } from '../types/task'
 
 const NOTE_PREVIEW_LENGTH = 80
 const MENTION_REGEX = /@\[([^\]]+)\]\([^)]+\)/g
@@ -39,12 +39,32 @@ function formatDate(iso: string | undefined | null): string {
 export default function Dashboard() {
   const navigate = useNavigate()
   const { notes } = useNotes()
-  const { isSuperAdmin, currentAdminId, currentMember, currentUserMemberId } = useCurrentUser()
-  const isProjectLead = Boolean(currentUserMemberId && getMemberIdsWhoAreProjectLeads().map((id) => id.toUpperCase()).includes(currentUserMemberId.toUpperCase()))
+  const { isSuperAdmin, currentAdminId, currentMember, isProjectLead } = useCurrentUser()
   const canAddTask = isSuperAdmin || (currentAdminId && !currentMember) || isProjectLead
 
-  const projects = useMemo(() => getProjectsList(), [])
-  const tasks = useMemo(() => flattenTasksFromProjects(), [])
+  const [projects, setProjects] = useState<ProjectListRow[]>([])
+  const [tasks, setTasks] = useState<Task[]>([])
+
+  useEffect(() => {
+    let active = true
+    ;(async () => {
+      try {
+        const [projectRows, flattenedTasks] = await Promise.all([
+          getProjectsList(),
+          flattenTasksFromProjects(),
+        ])
+        if (!active) return
+        setProjects(projectRows)
+        setTasks(flattenedTasks)
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error('Failed to load dashboard data', err)
+      }
+    })()
+    return () => {
+      active = false
+    }
+  }, [])
   const membersCount = useMemo(() => getMembersList().length, [])
   const activeProjectsCount = useMemo(() => projects.filter((p) => p.status === 'In Progress').length, [projects])
 

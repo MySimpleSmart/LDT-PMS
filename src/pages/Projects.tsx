@@ -4,7 +4,7 @@ import { Typography, Table, Tag, Button, Input, Select, DatePicker, Space, Card,
 import { EyeOutlined, PlusOutlined, SearchOutlined, UnorderedListOutlined, AppstoreOutlined, TeamOutlined, CheckSquareOutlined, FileOutlined, CommentOutlined, UserOutlined } from '@ant-design/icons'
 import type { Dayjs } from 'dayjs'
 import dayjs from 'dayjs'
-import { getProjectById, getProjectsList, getRelatedProjectsForMember } from '../data/projects'
+import { getProjectById, getProjectsList, getRelatedProjectsForMember, type ProjectListRow, type ProjectDetail } from '../data/projects'
 import { useCurrentUser } from '../context/CurrentUserContext'
 
 const priorityColors: Record<string, string> = {
@@ -32,12 +32,42 @@ const statusOptions = [
   { value: 'Completed', label: 'Completed' },
 ]
 
-type ProjectRow = ReturnType<typeof getProjectsList>[number]
+type ProjectRow = ProjectListRow
 
 export default function Projects() {
   const navigate = useNavigate()
-  const { currentAdminId, isSuperAdmin, currentUserMemberId } = useCurrentUser()
-  const allProjects = useMemo(() => getProjectsList(), [])
+  const { isSuperAdmin, currentUserMemberId } = useCurrentUser()
+  const [allProjects, setAllProjects] = useState<ProjectRow[]>([])
+  const [projectDetailsById, setProjectDetailsById] = useState<Record<string, ProjectDetail>>({})
+
+  useEffect(() => {
+    let active = true
+    ;(async () => {
+      try {
+        const rows = await getProjectsList()
+        if (!active) return
+        setAllProjects(rows)
+
+        const details: Record<string, ProjectDetail> = {}
+        for (const row of rows) {
+          try {
+            const detail = await getProjectById(row.id)
+            if (detail) details[row.id] = detail
+          } catch (err) {
+            // eslint-disable-next-line no-console
+            console.error('Failed to load project detail', row.id, err)
+          }
+        }
+        if (active) setProjectDetailsById(details)
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error('Failed to load projects list', err)
+      }
+    })()
+    return () => {
+      active = false
+    }
+  }, [])
 
   const [activeTab, setActiveTab] = useState<string>('all')
   const [searchText, setSearchText] = useState('')
@@ -50,10 +80,30 @@ export default function Projects() {
   const [kanbanVisibleCount, setKanbanVisibleCount] = useState<Record<string, number>>({})
   const KANBAN_INITIAL_COUNT = 40
   const KANBAN_LOAD_MORE = 20
-  const myProjectIds = useMemo(
-    () => (currentUserMemberId ? getRelatedProjectsForMember(currentUserMemberId).map((r) => r.key) : []),
-    [currentUserMemberId]
-  )
+  const [myProjectIds, setMyProjectIds] = useState<string[]>([])
+
+  useEffect(() => {
+    let active = true
+    if (!currentUserMemberId) {
+      setMyProjectIds([])
+      return
+    }
+    ;(async () => {
+      try {
+        // Ensure projects cache is loaded
+        await getProjectsList()
+        if (!active) return
+        const related = getRelatedProjectsForMember(currentUserMemberId)
+        if (active) setMyProjectIds(related.map((r) => r.key))
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error('Failed to load related projects for member', err)
+      }
+    })()
+    return () => {
+      active = false
+    }
+  }, [currentUserMemberId])
   const baseProjects = useMemo(
     () => (activeTab === 'my' ? allProjects.filter((p) => myProjectIds.includes(p.projectId)) : allProjects),
     [activeTab, allProjects, myProjectIds]
@@ -124,7 +174,7 @@ export default function Projects() {
       key: 'membersCount',
       width: 100,
       render: (_: unknown, r: ProjectRow) => {
-        const detail = getProjectById(r.id)
+        const detail = projectDetailsById[r.id]
         const count = detail?.members?.length ?? 0
         return (
           <Space size={4} align="center">
@@ -139,7 +189,7 @@ export default function Projects() {
       key: 'projectLead',
       width: 140,
       render: (_: unknown, r: ProjectRow) => {
-        const detail = getProjectById(r.id)
+        const detail = projectDetailsById[r.id]
         const members = detail?.members ?? []
         const lead = members.find((m) => m.role === 'Lead') ?? members[0]
         return lead?.name ?? '—'
@@ -318,7 +368,7 @@ export default function Projects() {
                           </div>
                           <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
                             {visibleProjects.map((p) => {
-                              const d = getProjectById(p.id)
+                              const d = projectDetailsById[p.id]
                               const membersCount = d?.members.length ?? 0
                               const tasksCount = d?.tasks.length ?? 0
                               return (
@@ -484,7 +534,7 @@ export default function Projects() {
                           </div>
                           <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
                             {visibleProjects.map((p) => {
-                              const d = getProjectById(p.id)
+                              const d = projectDetailsById[p.id]
                               const membersCount = d?.members.length ?? 0
                               const tasksCount = d?.tasks.length ?? 0
                               return (

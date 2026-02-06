@@ -1,7 +1,6 @@
 import type { Task, TaskAssignee } from '../types/task'
 import type { ProjectTask } from '../types/project'
-import { getProjectsList } from './projects'
-import { getProjectById } from './projects'
+import { getProjectsList, getProjectsCache } from './projects'
 
 /** Normalize project task to assignees array (supports legacy single assignee). */
 export function getTaskAssignees(t: ProjectTask | Task): TaskAssignee[] {
@@ -16,16 +15,17 @@ export function getTaskAssignees(t: ProjectTask | Task): TaskAssignee[] {
 }
 
 /** Flatten all tasks from all projects into Task[] for the Tasks list. */
-export function flattenTasksFromProjects(): Task[] {
-  const projects = getProjectsList()
+export async function flattenTasksFromProjects(): Promise<Task[]> {
+  // Ensure projects cache is populated from Firestore
+  await getProjectsList()
+  const entries = getProjectsCache()
+
   const tasks: Task[] = []
-  for (const proj of projects) {
-    const detail = getProjectById(proj.id)
-    if (!detail) continue
+  for (const { id: projectInternalId, detail } of entries) {
     for (const t of detail.tasks) {
       const assignees = getTaskAssignees(t)
       tasks.push({
-        id: `${proj.id}-${t.key}`,
+        id: `${projectInternalId}-${t.key}`,
         projectId: detail.projectId,
         projectName: detail.projectName,
         taskName: t.title,
@@ -41,15 +41,23 @@ export function flattenTasksFromProjects(): Task[] {
   return tasks
 }
 
-/** Related tasks for a member (profile Related Tasks section). */
+/** Related tasks for a member (profile Related Tasks section). Uses the in-memory projects cache (loaded from Firestore). */
 export function getRelatedTasksForMember(memberId: string): { key: string; title: string; status: string; project: string }[] {
-  const flat = flattenTasksFromProjects()
-  return flat
-    .filter((t) => getTaskAssignees(t).some((a) => a.memberId === memberId))
-    .map((t, idx) => ({
-      key: t.id || `task-${idx}`,
-      title: t.taskName,
-      status: t.status,
-      project: t.projectName,
-    }))
+  const entries = getProjectsCache()
+  const related: { key: string; title: string; status: string; project: string }[] = []
+
+  entries.forEach(({ id: projectInternalId, detail }) => {
+    detail.tasks.forEach((t) => {
+      const taskAssignees = getTaskAssignees(t)
+      if (!taskAssignees.some((a) => a.memberId === memberId)) return
+      related.push({
+        key: `${projectInternalId}-${t.key}`,
+        title: t.title,
+        status: t.status,
+        project: detail.projectName,
+      })
+    })
+  })
+
+  return related
 }

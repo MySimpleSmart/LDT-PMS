@@ -24,7 +24,7 @@ import type { TabsProps } from 'antd'
 import { ArrowLeftOutlined, EditOutlined, TeamOutlined, CommentOutlined, FileOutlined, CalendarOutlined, UserOutlined, CheckSquareOutlined, PlusOutlined, UserAddOutlined, DeleteOutlined, UploadOutlined, CheckCircleOutlined, CloseCircleOutlined, AppstoreOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
 
-import { getProjectById, updateProjectById } from '../data/projects'
+import { getProjectById, updateProjectById, type ProjectDetail } from '../data/projects'
 import { getMembersList } from '../data/members'
 import { getTaskAssignees } from '../data/tasks'
 import { useCurrentUser } from '../context/CurrentUserContext'
@@ -92,7 +92,28 @@ export default function ProjectProfile() {
 
   // IMPORTANT: keep project reference stable while editing
   const [projectVersion, setProjectVersion] = useState(0)
-  const project = useMemo(() => (id ? getProjectById(id) : null), [id, projectVersion])
+  const [project, setProject] = useState<ProjectDetail | null>(null)
+
+  useEffect(() => {
+    let active = true
+    if (!id) {
+      setProject(null)
+      return
+    }
+    ;(async () => {
+      try {
+        const detail = await getProjectById(id)
+        if (active) setProject(detail)
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error('Failed to load project for ProjectProfile', err)
+        if (active) setProject(null)
+      }
+    })()
+    return () => {
+      active = false
+    }
+  }, [id, projectVersion])
 
   // Project Lead may only edit/complete/upload projects they lead; Super Admin/Admin may do any project
   const isLeadOfThisProject = useMemo(() => {
@@ -175,7 +196,7 @@ export default function ProjectProfile() {
       content: 'This will update the project details.',
       okText: 'Save changes',
       cancelText: 'Cancel',
-      onOk: () => {
+      onOk: async () => {
         if (!isLeadOfThisProject) {
           message.error('You can only edit and complete projects you lead.')
           return
@@ -197,7 +218,7 @@ export default function ProjectProfile() {
               ...t,
               status: 'Completed',
             }))
-            updateProjectById(id, { ...updates, tasks: completedBaseTasks })
+            await updateProjectById(id, { ...updates, tasks: completedBaseTasks })
 
             // Update any local (session-only) tasks in this profile view
             setLocalTasks((prev) => prev.map((t) => ({ ...t, status: 'Completed' })))
@@ -207,10 +228,10 @@ export default function ProjectProfile() {
               .filter((t) => t.projectId === project.projectId)
               .forEach((t) => updateTask(t.id, { status: 'Completed' }))
           } else {
-            updateProjectById(id, updates)
+            await updateProjectById(id, updates)
           }
         } else if (id) {
-          updateProjectById(id, updates)
+          await updateProjectById(id, updates)
         }
         console.log('Update project:', id, updates)
         if (updates.status === 'Pending completion') {
@@ -239,19 +260,19 @@ export default function ProjectProfile() {
     onEditFinish(values)
   }
 
-  const confirmPendingProject = () => {
+  const confirmPendingProject = async () => {
     if (!id || !project) return
     const completedBaseTasks = project.tasks.map((t) => ({ ...t, status: 'Completed' }))
-    updateProjectById(id, { status: 'Completed', tasks: completedBaseTasks })
+    await updateProjectById(id, { status: 'Completed', tasks: completedBaseTasks })
     setLocalTasks((prev) => prev.map((t) => ({ ...t, status: 'Completed' })))
     globalTasks.filter((t) => t.projectId === project.projectId).forEach((t) => updateTask(t.id, { status: 'Completed' }))
     message.success('Project confirmed and marked as Completed.')
     setProjectVersion((v) => v + 1)
   }
 
-  const rejectPendingProject = () => {
+  const rejectPendingProject = async () => {
     if (!id) return
-    updateProjectById(id, { status: 'In Progress' })
+    await updateProjectById(id, { status: 'In Progress' })
     message.success('Project rejected. Status set back to In Progress.')
     setProjectVersion((v) => v + 1)
   }

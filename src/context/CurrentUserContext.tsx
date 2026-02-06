@@ -1,16 +1,10 @@
 import { createContext, useContext, useState, useCallback, useEffect, useMemo, type ReactNode } from 'react'
-import { getAdminById } from '../data/admins'
 import type { AdminDetail } from '../data/admins'
-import { getMemberIdForAdminId, getMemberById } from '../data/members'
 import type { MemberDetail } from '../data/members'
-import { getMemberIdsWhoAreProjectLeads } from '../data/projects'
-import { getMemberProfilePath } from '../data/members'
+import { getProjectsList } from '../data/projects'
 import { useAuth } from './AuthContext'
-import { isSuperAdminId } from '../constants/roles'
 
 const STORAGE_KEY = 'echo_pms_current_admin_id'
-
-const DEFAULT_ADMIN_ID = '1'
 
 type CurrentUserContextValue = {
   currentAdminId: string | null
@@ -34,7 +28,7 @@ type CurrentUserContextValue = {
 const CurrentUserContext = createContext<CurrentUserContextValue | null>(null)
 
 export function CurrentUserProvider({ children }: { children: ReactNode }) {
-  const { user, userRole } = useAuth()
+  const { currentUser, isAuthenticated } = useAuth()
   const [currentAdminId, setCurrentAdminIdState] = useState<string | null>(() => {
     try {
       return localStorage.getItem(STORAGE_KEY) || null
@@ -43,19 +37,14 @@ export function CurrentUserProvider({ children }: { children: ReactNode }) {
     }
   })
 
-  const authAdminId = user && (user as { adminId?: string }).adminId ? (user as { adminId: string }).adminId : null
-  const authMemberId = user && (user as { memberId?: string }).memberId ? (user as { memberId: string }).memberId : null
   useEffect(() => {
-    if (user && userRole === 'admin') {
-      setCurrentAdminIdState(authAdminId || DEFAULT_ADMIN_ID)
-    }
-    if (user && userRole === 'member') {
+    // For now, do not map Firebase users to demo admin IDs automatically.
+    // Any authenticated user is treated as a generic logged-in user; admin/member
+    // domain data remains demo-only and is not tied to Auth.
+    if (!isAuthenticated) {
       setCurrentAdminIdState(null)
     }
-    if (!user) {
-      setCurrentAdminIdState(null)
-    }
-  }, [user, userRole, authAdminId])
+  }, [isAuthenticated])
 
   useEffect(() => {
     try {
@@ -71,30 +60,33 @@ export function CurrentUserProvider({ children }: { children: ReactNode }) {
     setCurrentAdminIdState(id)
   }, [])
 
-  const currentAdmin = currentAdminId ? getAdminById(currentAdminId) : null
-  const currentMemberId = userRole === 'member' && authMemberId ? authMemberId : null
-  const currentMember = currentMemberId ? getMemberById(currentMemberId) : null
-  const isLoggedIn = Boolean((currentAdminId && currentAdmin) || (currentMemberId && currentMember))
-  const isSuperAdmin = isSuperAdminId(currentAdminId)
-  const isProjectLead = useMemo(() => {
-    if (isSuperAdmin) return true
-    const memberId = currentMemberId || (currentAdminId ? getMemberIdForAdminId(currentAdminId) : null)
-    if (!memberId) return false
-    const leadIds = getMemberIdsWhoAreProjectLeads().map((id) => id.toUpperCase())
-    return leadIds.includes(memberId.toUpperCase())
-  }, [isSuperAdmin, currentAdminId, currentMemberId])
+  // Preload projects into cache so project-lead checks have data from Firestore
+  useEffect(() => {
+    ;(async () => {
+      try {
+        await getProjectsList()
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error('Failed to preload projects for CurrentUserContext', err)
+      }
+    })()
+  }, [])
 
-  const displayName = currentAdmin
-    ? `${currentAdmin.firstName} ${currentAdmin.lastName}`
-    : currentMember
-      ? `${currentMember.firstName} ${currentMember.lastName}`
-      : 'User'
-  const profilePath = currentAdminId
-    ? `/admins/${currentAdminId}`
-    : currentMemberId
-      ? getMemberProfilePath(currentMemberId)
-      : '/'
-  const currentUserMemberId = currentMemberId || (currentAdminId ? getMemberIdForAdminId(currentAdminId) : null)
+  const currentAdmin: AdminDetail | null = null
+  const currentMemberId: string | null = null
+  const currentMember: MemberDetail | null = null
+  const isLoggedIn = isAuthenticated
+  // Until real role mapping is implemented, treat any authenticated user
+  // as having full access to admin/project-lead features.
+  const isSuperAdmin = isAuthenticated
+  const isProjectLead = useMemo(() => isAuthenticated, [isAuthenticated])
+
+  const displayName =
+    currentUser?.displayName ||
+    currentUser?.email ||
+    'User'
+  const profilePath = '/'
+  const currentUserMemberId: string | null = null
 
   const value: CurrentUserContextValue = {
     currentAdminId,

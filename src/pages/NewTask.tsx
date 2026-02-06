@@ -1,23 +1,12 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Card, Form, Input, Select, Button, Space, Typography, message, Row, Col, Modal, DatePicker } from 'antd'
 import { ArrowLeftOutlined } from '@ant-design/icons'
 import { useTasks } from '../context/TasksContext'
-import { getProjectsList, getProjectById } from '../data/projects'
+import { getProjectsList, getProjectById, type ProjectListRow, type ProjectDetail } from '../data/projects'
 import { useUnsavedChanges } from '../context/UnsavedChangesContext'
 import { useCurrentUser } from '../context/CurrentUserContext'
 import type { TaskNote } from '../types/task'
-
-function getProjectIdsWhereUserIsLead(memberId: string): string[] {
-  const list = getProjectsList()
-  const ids: string[] = []
-  for (const p of list) {
-    const detail = getProjectById(p.id)
-    const leadId = detail?.members.find((m) => m.role === 'Lead')?.memberId
-    if (leadId === memberId) ids.push(p.id)
-  }
-  return ids
-}
 
 const taskStatusOptions = [
   { value: 'To do', label: 'To do' },
@@ -31,8 +20,48 @@ export default function NewTask() {
   const { displayName, isSuperAdmin, currentAdminId, currentMember, currentUserMemberId } = useCurrentUser()
   const { dirty, setDirty, confirmNavigation } = useUnsavedChanges()
 
-  const canAddTask = isSuperAdmin || (currentAdminId && !currentMember) || Boolean(currentUserMemberId && getProjectIdsWhereUserIsLead(currentUserMemberId).length)
-  const leadProjectIds = currentUserMemberId ? getProjectIdsWhereUserIsLead(currentUserMemberId) : []
+  const [projects, setProjects] = useState<ProjectListRow[]>([])
+  const [projectDetailsById, setProjectDetailsById] = useState<Record<string, ProjectDetail>>({})
+  const [leadProjectIds, setLeadProjectIds] = useState<string[]>([])
+
+  useEffect(() => {
+    let active = true
+    ;(async () => {
+      try {
+        const rows = await getProjectsList()
+        if (!active) return
+        setProjects(rows)
+
+        const details: Record<string, ProjectDetail> = {}
+        const leadIds: string[] = []
+        for (const row of rows) {
+          try {
+            const detail = await getProjectById(row.id)
+            if (!detail) continue
+            details[row.id] = detail
+            if (currentUserMemberId && detail.members.some((m) => m.role === 'Lead' && m.memberId === currentUserMemberId)) {
+              leadIds.push(row.id)
+            }
+          } catch (err) {
+            // eslint-disable-next-line no-console
+            console.error('Failed to load project detail for NewTask', row.id, err)
+          }
+        }
+        if (active) {
+          setProjectDetailsById(details)
+          setLeadProjectIds(leadIds)
+        }
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error('Failed to load projects for NewTask page', err)
+      }
+    })()
+    return () => {
+      active = false
+    }
+  }, [currentUserMemberId])
+
+  const canAddTask = isSuperAdmin || (currentAdminId && !currentMember) || Boolean(currentUserMemberId && leadProjectIds.length)
 
   useEffect(() => {
     if (!canAddTask) navigate('/tasks', { replace: true })
@@ -53,21 +82,20 @@ export default function NewTask() {
     return () => window.removeEventListener('beforeunload', handler)
   }, [dirty])
 
-  const projects = getProjectsList()
   const projectOptions = (currentMember && currentUserMemberId && leadProjectIds.length
     ? projects.filter((p) => leadProjectIds.includes(p.id))
     : projects
   ).map((p) => ({ value: p.id, label: `${p.projectId} – ${p.projectName}` }))
 
   const selectedProjectId = Form.useWatch('projectId', form)
-  const projectDetail = selectedProjectId ? getProjectById(selectedProjectId) : null
+  const projectDetail = selectedProjectId ? projectDetailsById[selectedProjectId] ?? null : null
   const assigneeOptions = projectDetail
     ? projectDetail.members.map((m) => ({ value: m.memberId, label: `${m.name} (${m.role})` }))
     : []
 
   const onFinish = (values: Record<string, unknown>) => {
     const projectId = values.projectId as string
-    const project = projectId ? getProjectById(projectId) : null
+    const project = projectId ? projectDetailsById[projectId] ?? null : null
     if (!project) {
       message.error('Please select a project.')
       return

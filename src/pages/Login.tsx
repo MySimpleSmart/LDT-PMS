@@ -3,20 +3,19 @@ import { useNavigate } from 'react-router-dom'
 import { Form, Input, Button, Card, Typography, Alert, Spin } from 'antd'
 import { UserOutlined, LockOutlined } from '@ant-design/icons'
 import { useAuth } from '../context/AuthContext'
-import { isFirebaseConfigured } from '../lib/firebase'
 
 const { Title, Text } = Typography
 
 export default function Login() {
   const navigate = useNavigate()
-  const { user, loading, signIn, error, clearError } = useAuth()
+  const { currentUser, loading, isAuthenticated, signIn, error, clearError } = useAuth()
   const [submitting, setSubmitting] = useState(false)
 
   useEffect(() => {
-    if (!loading && user) {
+    if (!loading && isAuthenticated && currentUser) {
       navigate('/', { replace: true })
     }
-  }, [user, loading, navigate])
+  }, [currentUser, isAuthenticated, loading, navigate])
 
   useEffect(() => {
     clearError()
@@ -79,15 +78,6 @@ export default function Login() {
           </div>
           <Text type="secondary">Sign in to your account</Text>
         </div>
-
-        {!isFirebaseConfigured() && (
-          <Alert
-            type="info"
-            message="Demo mode"
-            description="Super Admin: admin / 123 — Project Lead (Noah Wilson, member): projectlead / 123 — Admin, no dashboard: alex / 123. Configure Firebase for real login."
-            style={{ marginBottom: 16 }}
-          />
-        )}
 
         {error && (
           <Alert

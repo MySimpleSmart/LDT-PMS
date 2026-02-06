@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useMemo, useCallback } from 'react'
+import { createContext, useContext, useState, useMemo, useCallback, useEffect } from 'react'
 import type { Task, TaskNote } from '../types/task'
 import { flattenTasksFromProjects } from '../data/tasks'
 
@@ -13,7 +13,23 @@ interface TasksContextValue {
 const TasksContext = createContext<TasksContextValue | null>(null)
 
 export function TasksProvider({ children }: { children: React.ReactNode }) {
-  const [tasks, setTasks] = useState<Task[]>(() => flattenTasksFromProjects())
+  const [tasks, setTasks] = useState<Task[]>([])
+
+  useEffect(() => {
+    let active = true
+    ;(async () => {
+      try {
+        const initial = await flattenTasksFromProjects()
+        if (active) setTasks(initial)
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error('Failed to load initial tasks from projects', err)
+      }
+    })()
+    return () => {
+      active = false
+    }
+  }, [])
 
   const addTask = useCallback((task: Omit<Task, 'id'>) => {
     const id = `new-${Date.now()}`
