@@ -11,7 +11,6 @@ import {
   Table,
   Space,
   Tabs,
-  Timeline,
   Form,
   Input,
   message,
@@ -24,37 +23,10 @@ import type { AdminDetail } from '../data/admins'
 import { useCurrentUser } from '../context/CurrentUserContext'
 import { ADMIN_ROLE } from '../constants/roles'
 import MemberAvatar from '../components/MemberAvatar'
+import ActivityLogTimeline from '../components/ActivityLogTimeline'
 
-type ActivityItem = { id: string; action: string; date: string }
-
-function getAdminActivityPlaceholder(adminId: string): ActivityItem[] {
-  return [
-    { id: '1', action: 'Logged in', date: new Date(Date.now() - 3600000).toISOString() },
-    { id: '2', action: 'Edited project Alpha', date: new Date(Date.now() - 86400000).toISOString() },
-    { id: '3', action: 'Created note "Sprint planning"', date: new Date(Date.now() - 172800000).toISOString() },
-    { id: '4', action: 'Profile updated', date: new Date(Date.now() - 259200000).toISOString() },
-  ]
-}
-
-function ActivityLogList({ activities }: { activities: ActivityItem[] }) {
-  if (!activities.length) {
-    return <Typography.Text type="secondary">No activity recorded yet.</Typography.Text>
-  }
-  return (
-    <Timeline
-      items={activities.map((a) => ({
-        key: a.id,
-        children: (
-          <>
-            <Typography.Text>{a.action}</Typography.Text>
-            <Typography.Text type="secondary" style={{ display: 'block', fontSize: 12 }}>
-              {new Date(a.date).toLocaleString()}
-            </Typography.Text>
-          </>
-        ),
-      }))}
-    />
-  )
+function sortActivityByNewest<T extends { createdAt?: string }>(items: T[]): T[] {
+  return [...items].sort((a, b) => (new Date(b.createdAt || 0).getTime()) - (new Date(a.createdAt || 0).getTime()))
 }
 
 export default function AdminProfile() {
@@ -86,6 +58,14 @@ export default function AdminProfile() {
   const [adminEmailForm] = Form.useForm()
   const [adminPasswordLoading, setAdminPasswordLoading] = useState(false)
   const [adminEmailLoading, setAdminEmailLoading] = useState(false)
+
+  const activityItems = admin
+    ? sortActivityByNewest(admin.activityLog || []).map((a) => ({
+        key: a.key,
+        label: a.description || a.type,
+        sublabel: `${a.author ? `${a.author} · ` : ''}${new Date(a.createdAt || '').toLocaleString()}`,
+      }))
+    : []
 
   if (loading) {
     return (
@@ -193,10 +173,11 @@ export default function AdminProfile() {
             ),
             children: (
               <Card size="small" title="Recent activity">
-                <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 12 }}>
-                  Recent actions and events for this admin. Connect to your backend to show real data.
-                </Typography.Text>
-                <ActivityLogList activities={getAdminActivityPlaceholder(admin.adminId)} />
+                <ActivityLogTimeline
+                  items={activityItems}
+                  description="Recent actions and events for this admin."
+                  emptyMessage="No activity recorded yet."
+                />
               </Card>
             ),
           },

@@ -1,4 +1,4 @@
-import type { ProjectMember, ProjectNote, ProjectFile, ProjectTask } from '../types/project'
+import type { ProjectMember, ProjectNote, ProjectFile, ProjectTask, ProjectActivity } from '../types/project'
 import { getDb } from '../lib/firebase'
 import {
   collection,
@@ -29,6 +29,7 @@ export interface ProjectDetail {
   members: ProjectMember[]
   notes: ProjectNote[]
   files: ProjectFile[]
+  activityLog: ProjectActivity[]
   /** Creator: full name of the super admin, admin, or project lead who created the project. */
   createdBy: string
   createdAt: string
@@ -60,6 +61,7 @@ interface ProjectDoc {
   members?: ProjectMember[]
   notes?: ProjectNote[]
   files?: ProjectFile[]
+  activityLog?: ProjectActivity[]
   /** Creator: full name of the super admin, admin, or project lead who created the project. */
   createdBy: string
   createdAt: string
@@ -82,24 +84,25 @@ function mapDocToProjectDetail(data: ProjectDoc, fallbackIndex?: number): Projec
   const progress = tasksCount > 0 ? Math.round((completedTasksCount / tasksCount) * 100) : computeProgress(tasks)
   const projectId = data.projectId ?? (data.num != null ? `LDP${String(data.num).padStart(4, '0')}` : (fallbackIndex != null ? `LDP${String(fallbackIndex).padStart(4, '0')}` : ''))
   return {
-    projectId,
-    projectName: data.projectName,
-    projectCategory: data.projectCategory,
-    projectTag: data.projectTag,
-    priority: data.priority,
-    startDate: data.startDate,
-    endDate: data.endDate,
-    status: data.status,
-    progress,
-    tasksCount,
-    completedTasksCount,
+    projectId: projectId || '',
+    projectName: data.projectName ?? '',
+    projectCategory: data.projectCategory ?? '',
+    projectTag: data.projectTag ?? '',
+    priority: data.priority ?? 'Medium',
+    startDate: data.startDate ?? '',
+    endDate: data.endDate ?? '',
+    status: data.status ?? 'Not Started',
+    progress: typeof progress === 'number' ? progress : 0,
+    tasksCount: typeof tasksCount === 'number' ? tasksCount : 0,
+    completedTasksCount: typeof completedTasksCount === 'number' ? completedTasksCount : 0,
     isArchived: data.isArchived ?? false,
-    tasks,
-    members: data.members ?? [],
-    notes: data.notes ?? [],
-    files: data.files ?? [],
-    createdBy: data.createdBy,
-    createdAt: data.createdAt,
+    tasks: Array.isArray(tasks) ? tasks : [],
+    members: Array.isArray(data.members) ? data.members : [],
+    notes: Array.isArray(data.notes) ? data.notes : [],
+    files: Array.isArray(data.files) ? data.files : [],
+    activityLog: Array.isArray(data.activityLog) ? data.activityLog : [],
+    createdBy: data.createdBy ?? '',
+    createdAt: data.createdAt ?? '',
   }
 }
 
@@ -247,6 +250,13 @@ export async function createProject(input: CreateProjectInput): Promise<string> 
   const db = getDb()
   const projectId = await getNextProjectId()
   const now = new Date().toISOString().slice(0, 10)
+  const initialActivity: ProjectActivity = {
+    key: `activity-${Date.now()}`,
+    type: 'project_created',
+    description: `Project created`,
+    author: input.createdBy,
+    createdAt: now,
+  }
   const data: ProjectDoc = {
     projectName: input.projectName,
     projectCategory: input.projectCategory,
@@ -262,6 +272,7 @@ export async function createProject(input: CreateProjectInput): Promise<string> 
     members: input.members,
     notes: [],
     files: input.files ?? [],
+    activityLog: [initialActivity],
     createdBy: input.createdBy,
     createdAt: now,
   }
@@ -290,13 +301,27 @@ export async function updateProjectById(id: string, updates: Partial<ProjectDeta
   if (typeof updates.completedTasksCount !== 'undefined') updateData.completedTasksCount = updates.completedTasksCount
   if (typeof updates.isArchived !== 'undefined') updateData.isArchived = updates.isArchived
   if (typeof updates.tasks !== 'undefined') {
-    updateData.tasks = updates.tasks
+    // Firestore rejects undefined; strip it from task objects
+    const stripUndefined = (obj: Record<string, unknown>): Record<string, unknown> => {
+      const out: Record<string, unknown> = {}
+      for (const [k, v] of Object.entries(obj)) {
+        if (v !== undefined) out[k] = v
+      }
+      return out
+    }
+    updateData.tasks = updates.tasks.map((t) => stripUndefined(t as Record<string, unknown>))
     updateData.tasksCount = updates.tasks.length
     updateData.completedTasksCount = updates.tasks.filter((t) => DONE_STATUSES.includes(t.status as (typeof DONE_STATUSES)[number])).length
   }
   if (typeof updates.members !== 'undefined') updateData.members = updates.members
   if (typeof updates.notes !== 'undefined') updateData.notes = updates.notes
   if (typeof updates.files !== 'undefined') updateData.files = updates.files
+  if (typeof updates.activityLog !== 'undefined') {
+    const maxActivityLogEntries = 200
+    updateData.activityLog = updates.activityLog.length > maxActivityLogEntries
+      ? updates.activityLog.slice(-maxActivityLogEntries)
+      : updates.activityLog
+  }
   if (typeof updates.createdBy !== 'undefined') updateData.createdBy = updates.createdBy
   if (typeof updates.createdAt !== 'undefined') updateData.createdAt = updates.createdAt
 

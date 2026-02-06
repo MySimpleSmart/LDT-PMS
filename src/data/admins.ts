@@ -2,6 +2,7 @@ import { getMemberById, getMembersWithAdminRole } from './members'
 import { getRelatedProjectsForMember } from './projects'
 import { getRelatedTasksForMember } from './tasks'
 import { ADMIN_ROLE, isSuperAdminId } from '../constants/roles'
+import type { ProjectActivity } from '../types/project'
 
 export type ProjectLeadRow = {
   id: string
@@ -50,6 +51,7 @@ export interface AdminDetail {
   position: string
   relatedProjects: { key: string; name: string; role: string }[]
   relatedTasks: { key: string; title: string; status: string; project: string }[]
+  activityLog: ProjectActivity[]
 }
 
 /** Resolve admin by member id (from Firestore members with role super_admin or admin). */
@@ -71,6 +73,7 @@ export async function getAdminById(id: string): Promise<AdminDetail | null> {
     position: member.position ?? '',
     relatedProjects: getRelatedProjectsForMember(member.memberId),
     relatedTasks: getRelatedTasksForMember(member.memberId),
+    activityLog: member.activityLog,
   }
 }
 

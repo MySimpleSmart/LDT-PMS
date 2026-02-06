@@ -4,25 +4,16 @@ import { Card, Form, Input, Select, Button, Space, Typography, Tag, message, Row
 import { ArrowLeftOutlined } from '@ant-design/icons'
 import AvatarPicker from '../components/AvatarPicker'
 import { useCurrentUser } from '../context/CurrentUserContext'
+import { useProjectMeta } from '../context/ProjectMetaContext'
 import { SYSTEM_ROLE } from '../constants/roles'
 import { createMember } from '../data/members'
-import { ADMIN_POSITION_OPTIONS } from '../data/admins'
-
-const jobTypeOptions = [
-  { value: 'Developer', label: 'Developer' },
-  { value: 'Designer', label: 'Designer' },
-  { value: 'QA', label: 'QA' },
-  { value: 'PM', label: 'PM' },
-  { value: 'Coordinator', label: 'Coordinator' },
-  { value: 'Marketer', label: 'Marketer' },
-  { value: 'DevOps', label: 'DevOps' },
-  { value: 'Researcher', label: 'Researcher' },
-  { value: 'Analyst', label: 'Analyst' },
-]
 
 export default function NewMember() {
   const navigate = useNavigate()
   const { isSuperAdmin } = useCurrentUser()
+  const { jobTypes, positions } = useProjectMeta()
+  const jobTypeOptions = jobTypes.map((v) => ({ value: v, label: v }))
+  const positionOptions = positions.map((v) => ({ value: v, label: v }))
   const [form] = Form.useForm()
   const [submitting, setSubmitting] = useState(false)
 
@@ -143,7 +134,7 @@ export default function NewMember() {
               </Form.Item>
 
               <Form.Item name="position" label="Position">
-                <Select placeholder="Select position" allowClear showSearch optionFilterProp="label" options={ADMIN_POSITION_OPTIONS} />
+                <Select placeholder="Select position" allowClear showSearch optionFilterProp="label" options={positionOptions} />
               </Form.Item>
 
               <Form.Item name="accountStatus" label="Account status">

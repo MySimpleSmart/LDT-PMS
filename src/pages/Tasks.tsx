@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useLocation } from 'react-router-dom'
 import {
   Typography,
   Table,
@@ -23,7 +23,7 @@ import {
   Pagination,
 } from 'antd'
 import type { TabsProps } from 'antd'
-import { PlusOutlined, CheckSquareOutlined, UnorderedListOutlined, UserOutlined, EditOutlined, CommentOutlined, SearchOutlined, CheckCircleOutlined, CloseCircleOutlined, AppstoreOutlined } from '@ant-design/icons'
+import { PlusOutlined, CheckSquareOutlined, UnorderedListOutlined, UserOutlined, EditOutlined, CommentOutlined, SearchOutlined, CheckCircleOutlined, AppstoreOutlined, RollbackOutlined, DeleteOutlined } from '@ant-design/icons'
 import type { Dayjs } from 'dayjs'
 import dayjs from 'dayjs'
 import { useTasks } from '../context/TasksContext'
@@ -36,7 +36,6 @@ import type { Task } from '../types/task'
 const taskStatusOptionsForForm = [
   { value: 'To do', label: 'To do' },
   { value: 'In progress', label: 'In progress' },
-  { value: 'Pending completion', label: 'Pending completion' },
 ]
 
 // Status options for filtering in the Tasks list
@@ -45,12 +44,19 @@ const taskStatusFilterOptions = [
   { value: 'Completed', label: 'Completed' },
 ]
 
-const TASK_KANBAN_STATUSES = ['To do', 'In progress', 'Pending completion', 'Completed']
+const TASK_KANBAN_STATUSES = ['To do', 'In progress', 'Completed']
 function taskStatusTagColor(s: string): string {
   if (s === 'Completed') return 'green'
   if (s === 'In progress') return 'blue'
-  if (s === 'Pending completion') return 'orange'
   return 'default'
+}
+
+/** Task can set start/end only when the parent project has at least one of start or end date. */
+function projectAllowsTaskDates(project: ProjectDetail | null): boolean {
+  if (!project) return false
+  const start = project.startDate?.trim() ?? ''
+  const end = project.endDate?.trim() ?? ''
+  return start !== '' || end !== ''
 }
 
 function formatDate(d: string) {
@@ -69,9 +75,9 @@ function excerpt(text: string, max = 60) {
 
 export default function Tasks() {
   const navigate = useNavigate()
-  const { tasks, getTaskById, updateTask, addTaskNote } = useTasks()
+  const location = useLocation()
+  const { tasks, getTaskById, updateTask, removeTask, addTaskNote } = useTasks()
   const { currentAdminId, currentMember, isSuperAdmin, currentUserMemberId, displayName, isProjectLead } = useCurrentUser()
-  const canConfirmRejectPending = (isSuperAdmin || currentAdminId) && !currentMember
   const [projects, setProjects] = useState<ProjectListRow[]>([])
   const [projectDetailsById, setProjectDetailsById] = useState<Record<string, ProjectDetail>>({})
   const showAddTask = isSuperAdmin || (currentAdminId && !currentMember) || isProjectLead
@@ -105,6 +111,15 @@ export default function Tasks() {
     }
   }, [])
 
+  const openTaskIdFromState = (location.state as { openTaskId?: string } | null)?.openTaskId
+  useEffect(() => {
+    if (!openTaskIdFromState) return
+    setSelectedTaskId(openTaskIdFromState)
+    setEditDrawerOpen(true)
+    setDrawerTab('details')
+    navigate(location.pathname, { replace: true, state: {} })
+  }, [openTaskIdFromState, navigate, location.pathname])
+
   /** Project Lead may only edit/complete tasks in projects they lead (and that project’s member tasks). Not other projects. Super Admin/Admin may edit any task. */
   const canEditTask = useCallback(
     (t: Task) => {
@@ -133,6 +148,7 @@ export default function Tasks() {
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null)
   const [drawerTab, setDrawerTab] = useState('details')
   const [noteInput, setNoteInput] = useState('')
+  const [noteSubmitting, setNoteSubmitting] = useState(false)
   const [editForm] = Form.useForm()
 
   const task = selectedTaskId ? getTaskById(selectedTaskId) : undefined
@@ -181,17 +197,27 @@ export default function Tasks() {
   useEffect(() => {
     if (editDrawerOpen && task) {
       const projectRow = projects.find((p) => p.projectId === task.projectId)
-      const assignees = getTaskAssignees(task)
+      const detail = projectRow ? projectDetailsById[projectRow.id] ?? null : null
+      const allowDates = projectAllowsTaskDates(detail)
       editForm.setFieldsValue({
         projectId: projectRow?.id,
         taskName: task.taskName,
         status: task.status,
-        startDate: task.startDate ? dayjs(task.startDate) : undefined,
-        endDate: task.endDate ? dayjs(task.endDate) : undefined,
-        assigneeMemberIds: assignees.map((a) => a.memberId),
+        startDate: allowDates && task.startDate ? dayjs(task.startDate) : undefined,
+        endDate: allowDates && task.endDate ? dayjs(task.endDate) : undefined,
+        assigneeMemberIds: getTaskAssignees(task).map((a) => a.memberId),
       })
     }
-  }, [editDrawerOpen, task, projects, editForm])
+  }, [editDrawerOpen, task, projects, projectDetailsById, editForm])
+
+  useEffect(() => {
+    if (editDrawerOpen && selectedProjectId) {
+      const detail = projectDetailsById[selectedProjectId] ?? null
+      if (!projectAllowsTaskDates(detail)) {
+        editForm.setFieldsValue({ startDate: undefined, endDate: undefined })
+      }
+    }
+  }, [editDrawerOpen, selectedProjectId, projectDetailsById, editForm])
 
   const openEditDrawer = (taskId: string) => {
     setSelectedTaskId(taskId)
@@ -239,13 +265,41 @@ export default function Tasks() {
       .map((m) => ({ memberId: m!.memberId, name: m!.name }))
     const start = values.startDate as { format?: (s: string) => string } | undefined
     const end = values.endDate as { format?: (s: string) => string } | undefined
+    let startDate: string | undefined = start?.format?.('YYYY-MM-DD')
+    let endDate: string | undefined = end?.format?.('YYYY-MM-DD')
+
+    if (!projectAllowsTaskDates(project)) {
+      startDate = undefined
+      endDate = undefined
+    } else {
+      const projectStart = project.startDate?.trim() ? dayjs(project.startDate) : null
+      const projectEnd = project.endDate?.trim() ? dayjs(project.endDate) : null
+      if (startDate && projectStart && dayjs(startDate).isBefore(projectStart, 'day')) {
+        message.error(`Task start date cannot be earlier than the project start date (${project.startDate}).`)
+        return
+      }
+      if (endDate && projectEnd && dayjs(endDate).isAfter(projectEnd, 'day')) {
+        message.error(`Task end date cannot be later than the project end date (${project.endDate}).`)
+        return
+      }
+      if (startDate && endDate && dayjs(endDate).isBefore(dayjs(startDate), 'day')) {
+        message.error('Task end date cannot be earlier than start date.')
+        return
+      }
+    }
+
+    let status = (values.status as string) || 'To do'
+    if (status !== 'Completed' && startDate && endDate) {
+      status = 'In progress'
+    }
+
     const updates = {
       projectId: project.projectId,
       projectName: project.projectName,
       taskName: (values.taskName as string)?.trim() || '',
-      status: (values.status as string) || 'To do',
-      startDate: start?.format?.('YYYY-MM-DD'),
-      endDate: end?.format?.('YYYY-MM-DD'),
+      status,
+      startDate,
+      endDate,
       assignees: assignees.length ? assignees : undefined,
     }
 
@@ -254,19 +308,30 @@ export default function Tasks() {
       content: 'This will update the task details.',
       okText: 'Save changes',
       cancelText: 'Cancel',
-      onOk: () => {
-        updateTask(task.id, updates)
-        message.success('Task updated.')
+      onOk: async () => {
+        try {
+          await updateTask(task.id, updates)
+          message.success('Task saved.')
+        } catch (err) {
+          message.error(err instanceof Error ? err.message : 'Failed to save task.')
+        }
       },
     })
   }
 
-  const onAddNote = () => {
+  const onAddNote = async () => {
     if (!task || !noteInput.trim()) return
-    const author = displayName || 'Current user'
-    addTaskNote(task.id, { author, content: noteInput.trim(), createdAt: new Date().toISOString() })
-    message.success('Note added.')
-    setNoteInput('')
+    setNoteSubmitting(true)
+    try {
+      const author = displayName || 'Current user'
+      await addTaskNote(task.id, { author, content: noteInput.trim(), createdAt: new Date().toISOString() })
+      message.success('Note saved.')
+      setNoteInput('')
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : 'Failed to save note.')
+    } finally {
+      setNoteSubmitting(false)
+    }
   }
 
   const currentUserDisplayName = displayName.trim()
@@ -312,7 +377,8 @@ export default function Tasks() {
     const grouped: Record<string, Task[]> = {}
     TASK_KANBAN_STATUSES.forEach((s) => { grouped[s] = [] })
     filteredTasks.forEach((t) => {
-      const key = TASK_KANBAN_STATUSES.includes(t.status) ? t.status : TASK_KANBAN_STATUSES[0]
+      const status = t.status === 'Pending completion' ? 'In progress' : t.status
+      const key = TASK_KANBAN_STATUSES.includes(status) ? status : TASK_KANBAN_STATUSES[0]
       grouped[key].push(t)
     })
     return TASK_KANBAN_STATUSES.map((status) => ({
@@ -332,7 +398,111 @@ export default function Tasks() {
     { title: 'Date', dataIndex: 'createdAt', key: 'createdAt', width: 180, render: formatDate },
   ]
 
+  const handleMarkComplete = useCallback(
+    (r: Task) => {
+      if (r.status === 'Completed') return
+      if (!canEditTask(r)) {
+        message.error('Only the project lead for this project can mark tasks as completed.')
+        return
+      }
+      Modal.confirm({
+        title: 'Mark task as completed?',
+        content: 'This will set the task status to Completed.',
+        okText: 'Mark as completed',
+        cancelText: 'Cancel',
+        onOk: async () => {
+          try {
+            await updateTask(r.id, { status: 'Completed' })
+            message.success('Task marked as completed.')
+          } catch (err) {
+            message.error(err instanceof Error ? err.message : 'Failed to update task.')
+          }
+        },
+      })
+    },
+    [canEditTask, updateTask]
+  )
+
+  const handleRedo = useCallback(
+    (r: Task) => {
+      if (r.status !== 'Completed') return
+      if (!canEditTask(r)) return
+      Modal.confirm({
+        title: 'Reopen task?',
+        content: 'This will set the task status back to In progress.',
+        okText: 'Reopen',
+        cancelText: 'Cancel',
+        onOk: async () => {
+          try {
+            await updateTask(r.id, { status: 'In progress' })
+            message.success('Task reopened.')
+          } catch (err) {
+            message.error(err instanceof Error ? err.message : 'Failed to update task.')
+          }
+        },
+      })
+    },
+    [canEditTask, updateTask]
+  )
+
+  const handleRemoveTask = useCallback(
+    (r: Task) => {
+      if (!canEditTask(r)) return
+      Modal.confirm({
+        title: 'Remove task?',
+        content: `This will permanently remove "${r.taskName}" from the project. This cannot be undone.`,
+        okText: 'Remove',
+        okButtonProps: { danger: true },
+        cancelText: 'Cancel',
+        onOk: async () => {
+          try {
+            await removeTask(r.id)
+            message.success('Task removed.')
+            if (selectedTaskId === r.id) {
+              setEditDrawerOpen(false)
+              setSelectedTaskId(null)
+            }
+          } catch (err) {
+            message.error(err instanceof Error ? err.message : 'Failed to remove task.')
+          }
+        },
+      })
+    },
+    [canEditTask, removeTask, selectedTaskId]
+  )
+
   const columns = [
+    {
+      title: '',
+      key: 'complete',
+      width: 48,
+      align: 'center' as const,
+      render: (_: unknown, r: Task) => {
+        if (r.status === 'Completed') {
+          return canEditTask(r) ? (
+            <Tooltip title="Reopen task">
+              <RollbackOutlined
+                style={{ color: '#1890ff', fontSize: 20, cursor: 'pointer' }}
+                onClick={() => handleRedo(r)}
+              />
+            </Tooltip>
+          ) : (
+            <CheckCircleOutlined style={{ color: '#52c41a', fontSize: 20 }} title="Completed" />
+          )
+        }
+        if (canEditTask(r)) {
+          return (
+            <Tooltip title="Mark as completed">
+              <CheckCircleOutlined
+                style={{ color: 'rgba(0,0,0,0.25)', fontSize: 20, cursor: 'pointer' }}
+                onClick={() => handleMarkComplete(r)}
+              />
+            </Tooltip>
+          )
+        }
+        return null
+      },
+    },
     { title: 'Related Project', dataIndex: 'projectName', key: 'projectName', width: 200 },
     { title: 'Task Name', dataIndex: 'taskName', key: 'taskName' },
     {
@@ -341,13 +511,14 @@ export default function Tasks() {
       key: 'status',
       width: 140,
       render: (status: string) => {
+        const displayStatus = status === 'Pending completion' ? 'In progress' : status
         const color =
-          status === 'Completed'
+          displayStatus === 'Completed'
             ? 'green'
-            : status === 'In progress'
+            : displayStatus === 'In progress'
             ? 'blue'
             : 'default'
-        return <Tag color={color}>{status}</Tag>
+        return <Tag color={color}>{displayStatus}</Tag>
       },
     },
     {
@@ -393,12 +564,17 @@ export default function Tasks() {
       {
         title: 'Action',
         key: 'action',
-        width: 100,
+        width: 140,
         render: (_: unknown, r: Task) =>
           canEditTask(r) ? (
-            <Button type="link" size="small" icon={<EditOutlined />} onClick={() => openEditDrawer(r.id)}>
-              Edit
-            </Button>
+            <Space size="small">
+              <Button type="link" size="small" icon={<EditOutlined />} onClick={() => openEditDrawer(r.id)}>
+                Edit
+              </Button>
+              <Button type="link" size="small" danger icon={<DeleteOutlined />} onClick={() => handleRemoveTask(r)}>
+                Remove
+              </Button>
+            </Space>
           ) : null,
       },
     ],
@@ -678,23 +854,49 @@ export default function Tasks() {
                   children: (
                     <Form form={editForm} layout="vertical" onFinish={onFinishEdit}>
                       <Form.Item name="projectId" label="Related Project" rules={[{ required: true, message: 'Select a project' }]}>
-                        <Select placeholder="Select project" options={projectOptions} showSearch optionFilterProp="label" allowClear disabled={task?.status === 'Completed' || (task?.status === 'Pending completion' && !canConfirmRejectPending)} />
+                        <Select placeholder="Select project" options={projectOptions} showSearch optionFilterProp="label" allowClear disabled={task?.status === 'Completed'} />
                       </Form.Item>
                       <Form.Item name="taskName" label="Task Name" rules={[{ required: true, message: 'Enter task name' }]}>
-                        <Input placeholder="e.g. Setup API" disabled={task?.status === 'Completed' || (task?.status === 'Pending completion' && !canConfirmRejectPending)} />
+                        <Input placeholder="e.g. Setup API" disabled={task?.status === 'Completed'} />
                       </Form.Item>
                       <Form.Item name="status" label="Task Status">
-                        <Select options={taskStatusOptionsForForm} disabled={task?.status === 'Completed' || (task?.status === 'Pending completion' && !canConfirmRejectPending)} />
+                        <Select options={taskStatusOptionsForForm} disabled={task?.status === 'Completed'} />
                       </Form.Item>
                       <Row gutter={16}>
                         <Col span={12}>
-                          <Form.Item name="startDate" label="Start Date">
-                            <DatePicker style={{ width: '100%' }} disabled={task?.status === 'Completed' || (task?.status === 'Pending completion' && !canConfirmRejectPending)} />
+                          <Form.Item
+                            name="startDate"
+                            label="Start Date"
+                            help={projectDetail && !projectAllowsTaskDates(projectDetail) ? 'Parent project has no start/end date; task dates are not allowed.' : undefined}
+                          >
+                            <DatePicker
+                              style={{ width: '100%' }}
+                              disabled={task?.status === 'Completed' || !projectAllowsTaskDates(projectDetail)}
+                              disabledDate={(d) => {
+                                if (!d || !projectDetail) return false
+                                const projectStart = projectDetail.startDate?.trim() ? dayjs(projectDetail.startDate) : null
+                                const projectEnd = projectDetail.endDate?.trim() ? dayjs(projectDetail.endDate) : null
+                                if (projectStart && d.isBefore(projectStart, 'day')) return true
+                                if (projectEnd && d.isAfter(projectEnd, 'day')) return true
+                                return false
+                              }}
+                            />
                           </Form.Item>
                         </Col>
                         <Col span={12}>
                           <Form.Item name="endDate" label="End Date">
-                            <DatePicker style={{ width: '100%' }} disabled={task?.status === 'Completed' || (task?.status === 'Pending completion' && !canConfirmRejectPending)} />
+                            <DatePicker
+                              style={{ width: '100%' }}
+                              disabled={task?.status === 'Completed' || !projectAllowsTaskDates(projectDetail)}
+                              disabledDate={(d) => {
+                                if (!d || !projectDetail) return false
+                                const projectStart = projectDetail.startDate?.trim() ? dayjs(projectDetail.startDate) : null
+                                const projectEnd = projectDetail.endDate?.trim() ? dayjs(projectDetail.endDate) : null
+                                if (projectStart && d.isBefore(projectStart, 'day')) return true
+                                if (projectEnd && d.isAfter(projectEnd, 'day')) return true
+                                return false
+                              }}
+                            />
                           </Form.Item>
                         </Col>
                       </Row>
@@ -705,66 +907,43 @@ export default function Tasks() {
                           options={assigneeOptions}
                           showSearch
                           optionFilterProp="label"
-                          disabled={!projectDetail || task?.status === 'Completed' || (task?.status === 'Pending completion' && !canConfirmRejectPending)}
+                          disabled={!projectDetail || task?.status === 'Completed'}
                         />
                       </Form.Item>
                       <Form.Item>
                         <Space>
-                          <Button type="primary" htmlType="submit" disabled={task?.status === 'Completed' || (task?.status === 'Pending completion' && !canConfirmRejectPending)}>
+                          <Button type="primary" htmlType="submit" disabled={task?.status === 'Completed'}>
                             Save changes
                           </Button>
-                          {task?.status === 'Pending completion' && canConfirmRejectPending ? (
-                            <Space>
-                              <Button
-                                type="primary"
-                                icon={<CheckCircleOutlined />}
-                                onClick={() => {
-                                  if (!task) return
-                                  editForm.setFieldsValue({ status: 'Completed' })
-                                  onFinishEdit({ ...editForm.getFieldsValue(), status: 'Completed' })
-                                  message.success('Task confirmed and marked as Completed.')
-                                }}
-                              >
-                                Confirm
-                              </Button>
-                              <Button
-                                danger
-                                icon={<CloseCircleOutlined />}
-                                onClick={() => {
-                                  if (!task) return
-                                  updateTask(task.id, { status: 'In progress' })
-                                  message.success('Task rejected. Status set back to In progress.')
-                                  setEditDrawerOpen(false)
-                                }}
-                              >
-                                Reject
-                              </Button>
-                            </Space>
-                          ) : (
-                            <Button
-                              type="default"
-                              icon={<CheckCircleOutlined />}
-                              style={
-                                task?.status === 'Completed' || task?.status === 'Pending completion'
-                                  ? { borderColor: '#d9d9d9', color: 'rgba(0,0,0,0.25)', cursor: 'not-allowed' }
-                                  : { borderColor: '#52c41a', color: '#52c41a' }
+                          <Button
+                            type="default"
+                            icon={<CheckCircleOutlined />}
+                            style={
+                              task?.status === 'Completed'
+                                ? { borderColor: '#d9d9d9', color: 'rgba(0,0,0,0.25)', cursor: 'not-allowed' }
+                                : { borderColor: '#52c41a', color: '#52c41a' }
+                            }
+                            disabled={task?.status === 'Completed'}
+                            onClick={() => {
+                              if (!task || !canEditTask(task)) {
+                                message.error('Only the project lead for this project can mark tasks as completed.')
+                                return
                               }
-                              disabled={task?.status === 'Completed' || task?.status === 'Pending completion'}
-                              onClick={() => {
-                                if (!task || !canEditTask(task)) {
-                                  message.error('Only the project lead for this project can mark tasks as completed.')
-                                  return
-                                }
-                                const targetStatus = canConfirmRejectPending ? 'Completed' : 'Pending completion'
-                                editForm.setFieldsValue({ status: targetStatus })
-                                const values = { ...editForm.getFieldsValue(), status: targetStatus }
-                                onFinishEdit(values)
-                                if (targetStatus === 'Pending completion') message.success('Task sent for completion. An admin will review.')
-                              }}
-                            >
-                              {task?.status === 'Completed' ? 'Completed' : task?.status === 'Pending completion' ? 'Pending review' : 'Mark as completed'}
-                            </Button>
-                          )}
+                              editForm.setFieldsValue({ status: 'Completed' })
+                              onFinishEdit({ ...editForm.getFieldsValue(), status: 'Completed' })
+                              message.success('Task marked as completed.')
+                            }}
+                          >
+                            {task?.status === 'Completed' ? 'Completed' : 'Mark as completed'}
+                          </Button>
+                          <Button
+                            type="default"
+                            danger
+                            icon={<DeleteOutlined />}
+                            onClick={() => task && handleRemoveTask(task)}
+                          >
+                            Remove task
+                          </Button>
                         </Space>
                       </Form.Item>
                     </Form>
@@ -787,7 +966,7 @@ export default function Tasks() {
                             value={noteInput}
                             onChange={(e) => setNoteInput(e.target.value)}
                           />
-                          <Button type="primary" onClick={onAddNote}>Add note</Button>
+                          <Button type="primary" onClick={onAddNote} loading={noteSubmitting} disabled={noteSubmitting}>Add note</Button>
                         </Space.Compact>
                       </Card>
                       <Table

@@ -2,11 +2,12 @@ import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { Card, Form, Input, Select, Button, Space, Typography, Tag, message, Row, Col, Modal, Spin } from 'antd'
 import { ArrowLeftOutlined, DeleteOutlined } from '@ant-design/icons'
-import { getAdminById, ADMIN_POSITION_OPTIONS } from '../data/admins'
+import { getAdminById } from '../data/admins'
 import type { AdminDetail } from '../data/admins'
 import { useCurrentUser } from '../context/CurrentUserContext'
 import { ADMIN_ROLE } from '../constants/roles'
 import AvatarPicker from '../components/AvatarPicker'
+import { useProjectMeta } from '../context/ProjectMetaContext'
 
 const departmentOptions = [
   { value: 'Engineering', label: 'Engineering' },
@@ -23,6 +24,8 @@ export default function EditAdmin() {
   const [form] = Form.useForm()
   const [admin, setAdmin] = useState<AdminDetail | null>(null)
   const [loading, setLoading] = useState(true)
+  const { positions } = useProjectMeta()
+  const positionOptions = positions.map((v) => ({ value: v, label: v }))
 
   useEffect(() => {
     if (!id) {
@@ -189,7 +192,7 @@ export default function EditAdmin() {
               )}
 
               <Form.Item name="position" label="Position">
-                <Select placeholder="Select position" allowClear showSearch optionFilterProp="label" options={ADMIN_POSITION_OPTIONS} />
+                <Select placeholder="Select position" allowClear showSearch optionFilterProp="label" options={positionOptions} />
               </Form.Item>
 
               <Form.Item name="accountStatus" label="Account status">

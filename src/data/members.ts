@@ -3,6 +3,7 @@ import { collection, getDocs, doc, getDoc, setDoc, updateDoc, query, where } fro
 import { getRelatedProjectsForMember, getMemberIdsWhoAreProjectLeads } from './projects'
 import { getRelatedTasksForMember } from './tasks'
 import { SYSTEM_ROLE } from '../constants/roles'
+import type { ProjectActivity } from '../types/project'
 
 export interface MemberDetail {
   memberId: string
@@ -21,6 +22,8 @@ export interface MemberDetail {
   position: string
   relatedProjects: { key: string; name: string; role: string }[]
   relatedTasks: { key: string; title: string; status: string; project: string }[]
+  /** Recent actions and events for this profile (stored on the member document). */
+  activityLog: ProjectActivity[]
 }
 
 const MEMBERS_COLLECTION = 'members'
@@ -40,6 +43,7 @@ interface MemberDoc {
   position?: string
   role?: string
   status?: string
+  activityLog?: ProjectActivity[]
 }
 
 function memberIdFromDoc(docId: string, data: MemberDoc): string {
@@ -63,6 +67,7 @@ function mapDocToMemberDetail(docId: string, data: MemberDoc): MemberDetail {
     position: data.position ?? '',
     relatedProjects: getRelatedProjectsForMember(memberId),
     relatedTasks: getRelatedTasksForMember(memberId),
+    activityLog: Array.isArray(data.activityLog) ? data.activityLog : [],
   }
 }
 
@@ -251,6 +256,7 @@ export type UpdateMemberInput = Partial<{
   accountStatus: 'Active' | 'Inactive'
   avatarUrl: string | null
   role: string
+  activityLog: ProjectActivity[]
 }>
 
 /** Update an existing member in Firestore. */
@@ -270,7 +276,26 @@ export async function updateMember(memberId: string, input: UpdateMemberInput): 
   if (input.accountStatus !== undefined) data.status = input.accountStatus.toLowerCase() === 'active' ? 'active' : 'inactive'
   if (input.avatarUrl !== undefined) data.avatarUrl = input.avatarUrl?.trim() ?? ''
   if (input.role !== undefined) data.role = input.role
+  if (input.activityLog !== undefined) {
+    const maxActivityLogEntries = 200
+    data.activityLog = input.activityLog.length > maxActivityLogEntries
+      ? input.activityLog.slice(-maxActivityLogEntries)
+      : input.activityLog
+  }
   await updateDoc(ref, data as Record<string, unknown>)
+}
+
+/** Append one activity entry to a member profile's activity log (capped to last 200). */
+export async function appendMemberActivity(memberId: string, activity: ProjectActivity): Promise<void> {
+  if (!memberId?.trim()) return
+  const db = getDb()
+  const ref = doc(db, MEMBERS_COLLECTION, memberId.trim())
+  const snap = await getDoc(ref)
+  if (!snap.exists()) return
+  const data = snap.data() as MemberDoc
+  const existing = Array.isArray(data.activityLog) ? data.activityLog : []
+  const next = [...existing, activity]
+  await updateMember(memberId.trim(), { activityLog: next })
 }
 
 /** Profile path for a member (for mention links and nav). */

@@ -14,7 +14,7 @@ import Projects from './pages/Projects'
 import ProjectProfile from './pages/ProjectProfile'
 import NewProject from './pages/NewProject'
 import EditProject from './pages/EditProject'
-import ProjectCategoriesAndTags from './pages/ProjectCategoriesAndTags'
+import SystemSettings from './pages/SystemSettings'
 import Tasks from './pages/Tasks'
 import NewTask from './pages/NewTask'
 import Members from './pages/Members'
@@ -59,8 +59,8 @@ function App() {
             <Route index element={<Dashboard />} />
             <Route path="projects" element={<Projects />} />
             <Route path="projects/new" element={<NewProject />} />
-            <Route path="projects/categories" element={<ProjectCategoriesAndTags />} />
-            <Route path="projects/tags" element={<Navigate to="/projects/categories" replace state={{ tab: 'tags' }} />} />
+            <Route path="projects/categories" element={<Navigate to="/settings/system" replace state={{ tab: 'categories' }} />} />
+            <Route path="projects/tags" element={<Navigate to="/settings/system" replace state={{ tab: 'tags' }} />} />
             <Route path="projects/:id/edit" element={<EditProject />} />
             <Route path="projects/:id" element={<ProjectProfile />} />
             <Route path="tasks" element={<Tasks />} />
@@ -77,6 +77,7 @@ function App() {
             <Route path="files" element={<Files />} />
             <Route path="courses" element={<Courses />} />
             <Route path="settings" element={<SettingsRedirect />} />
+            <Route path="settings/system" element={<SystemSettings />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>
         </Routes>

@@ -117,14 +117,39 @@ export default function NewProject() {
         uploadedAt: new Date().toISOString().slice(0, 10),
       })),
     }
+    const startStr = start?.format?.('YYYY-MM-DD') ?? (values.startDate ? String(values.startDate) : '—')
+    const endStr = end?.format?.('YYYY-MM-DD') ?? (values.endDate ? String(values.endDate) : '—')
+    const leadName = leadId ? membersList.find((m) => m.memberId === leadId)?.name : null
+    const contributorNames = memberIds.filter((id) => id !== leadId).map((id) => membersList.find((m) => m.memberId === id)?.name ?? id)
+    const confirmLabelStyle = { width: 100, flexShrink: 0, color: 'rgba(0,0,0,0.45)', fontSize: 13 }
+    const confirmValueStyle = { flex: 1, fontSize: 13 }
+    const confirmRowStyle = { display: 'flex', gap: 12, marginBottom: 8, alignItems: 'flex-start' }
+    const confirmSectionStyle = { marginBottom: 16 }
+    const confirmSectionTitleStyle = { fontSize: 12, fontWeight: 600, color: 'rgba(0,0,0,0.65)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.5px' }
     Modal.confirm({
       title: 'Create this project?',
       content: (
-        <div>
-          <div><b>Name:</b> {String(values.projectName ?? '')}</div>
-          <div><b>Status:</b> {String(values.status ?? '')}</div>
-          <div><b>Members:</b> {members.length}</div>
-          <div><b>Files:</b> {fileList.length}</div>
+        <div style={{ maxWidth: 420 }}>
+          <div style={confirmSectionStyle}>
+            <div style={confirmSectionTitleStyle}>Project</div>
+            <div style={confirmRowStyle}><span style={confirmLabelStyle}>Name</span><span style={confirmValueStyle}>{String(values.projectName ?? '—')}</span></div>
+            <div style={confirmRowStyle}><span style={confirmLabelStyle}>Category</span><span style={confirmValueStyle}>{String(values.projectCategory ?? '—')}</span></div>
+            <div style={confirmRowStyle}><span style={confirmLabelStyle}>Tags</span><span style={confirmValueStyle}>{tagStr || '—'}</span></div>
+            <div style={confirmRowStyle}><span style={confirmLabelStyle}>Priority</span><span style={confirmValueStyle}>{String(values.priority ?? '—')}</span></div>
+            <div style={confirmRowStyle}><span style={confirmLabelStyle}>Status</span><span style={confirmValueStyle}>{String(values.status ?? '—')}</span></div>
+            <div style={confirmRowStyle}><span style={confirmLabelStyle}>Start date</span><span style={confirmValueStyle}>{startStr}</span></div>
+            <div style={confirmRowStyle}><span style={confirmLabelStyle}>End date</span><span style={confirmValueStyle}>{endStr}</span></div>
+          </div>
+          <div style={confirmSectionStyle}>
+            <div style={confirmSectionTitleStyle}>Team</div>
+            <div style={confirmRowStyle}><span style={confirmLabelStyle}>Lead</span><span style={confirmValueStyle}>{leadName ?? '—'}</span></div>
+            <div style={confirmRowStyle}><span style={confirmLabelStyle}>Contributors</span><span style={confirmValueStyle}>{contributorNames.length ? contributorNames.join(', ') : '—'}</span></div>
+          </div>
+          <div style={confirmSectionStyle}>
+            <div style={confirmSectionTitleStyle}>Other</div>
+            <div style={confirmRowStyle}><span style={confirmLabelStyle}>Notes</span><span style={confirmValueStyle}>{values.notes ? (String(values.notes).slice(0, 80) + (String(values.notes).length > 80 ? '…' : '')) : '—'}</span></div>
+            <div style={confirmRowStyle}><span style={confirmLabelStyle}>Files</span><span style={confirmValueStyle}>{fileList.length ? fileList.map((f) => f.name).join(', ') : '—'}</span></div>
+          </div>
         </div>
       ),
       okText: 'Create project',

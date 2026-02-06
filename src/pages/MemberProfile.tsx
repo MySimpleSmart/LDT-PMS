@@ -11,7 +11,6 @@ import {
   Table,
   Space,
   Tabs,
-  Timeline,
   Form,
   Input,
   message,
@@ -22,37 +21,10 @@ import { ArrowLeftOutlined, MailOutlined, PhoneOutlined, SettingOutlined, Projec
 import { getMemberById } from '../data/members'
 import { useCurrentUser } from '../context/CurrentUserContext'
 import MemberAvatar from '../components/MemberAvatar'
+import ActivityLogTimeline from '../components/ActivityLogTimeline'
 
-type ActivityItem = { id: string; action: string; date: string }
-
-function getMemberActivityPlaceholder(memberId: string): ActivityItem[] {
-  return [
-    { id: '1', action: 'Profile viewed', date: new Date(Date.now() - 86400000).toISOString() },
-    { id: '2', action: 'Added to project Alpha as Contributor', date: new Date(Date.now() - 172800000).toISOString() },
-    { id: '3', action: 'Task "Setup API" assigned', date: new Date(Date.now() - 259200000).toISOString() },
-    { id: '4', action: 'Member profile updated', date: new Date(Date.now() - 345600000).toISOString() },
-  ]
-}
-
-function ActivityLogList({ entityName, activities }: { entityName: string; activities: ActivityItem[] }) {
-  if (!activities.length) {
-    return <Typography.Text type="secondary">No activity recorded yet.</Typography.Text>
-  }
-  return (
-    <Timeline
-      items={activities.map((a) => ({
-        key: a.id,
-        children: (
-          <>
-            <Typography.Text>{a.action}</Typography.Text>
-            <Typography.Text type="secondary" style={{ display: 'block', fontSize: 12 }}>
-              {new Date(a.date).toLocaleString()}
-            </Typography.Text>
-          </>
-        ),
-      }))}
-    />
-  )
+function sortActivityByNewest<T extends { createdAt?: string }>(items: T[]): T[] {
+  return [...items].sort((a, b) => (new Date(b.createdAt || 0).getTime()) - (new Date(a.createdAt || 0).getTime()))
 }
 
 export default function MemberProfile() {
@@ -91,6 +63,14 @@ export default function MemberProfile() {
   const [emailForm] = Form.useForm()
   const [passwordLoading, setPasswordLoading] = useState(false)
   const [emailLoading, setEmailLoading] = useState(false)
+
+  const activityItems = member
+    ? sortActivityByNewest(member.activityLog || []).map((a) => ({
+        key: a.key,
+        label: a.description || a.type,
+        sublabel: `${a.author ? `${a.author} · ` : ''}${new Date(a.createdAt || '').toLocaleString()}`,
+      }))
+    : []
 
   if (loading) {
     return (
@@ -188,7 +168,7 @@ export default function MemberProfile() {
         />
       ),
     },
-    ...(isSuperAdmin
+    ...((isSuperAdmin || isOwnProfile)
       ? [
           {
             key: 'activity',
@@ -199,10 +179,11 @@ export default function MemberProfile() {
             ),
             children: (
               <Card size="small" title="Recent activity">
-                <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 12 }}>
-                  Recent actions and events for this member. Connect to your backend to show real data.
-                </Typography.Text>
-                <ActivityLogList entityName={fullName} activities={getMemberActivityPlaceholder(member.memberId)} />
+                <ActivityLogTimeline
+                  items={activityItems}
+                  description="Recent actions and events for this member."
+                  emptyMessage="No activity recorded yet."
+                />
               </Card>
             ),
           },

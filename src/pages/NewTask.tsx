@@ -2,11 +2,19 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Card, Form, Input, Select, Button, Space, Typography, message, Row, Col, Modal, DatePicker } from 'antd'
 import { ArrowLeftOutlined } from '@ant-design/icons'
+import dayjs from 'dayjs'
 import { useTasks } from '../context/TasksContext'
 import { getProjectsList, getProjectById, type ProjectListRow, type ProjectDetail } from '../data/projects'
 import { useUnsavedChanges } from '../context/UnsavedChangesContext'
 import { useCurrentUser } from '../context/CurrentUserContext'
 import type { TaskNote } from '../types/task'
+
+function projectAllowsTaskDates(project: ProjectDetail | null): boolean {
+  if (!project) return false
+  const start = project.startDate?.trim() ?? ''
+  const end = project.endDate?.trim() ?? ''
+  return start !== '' || end !== ''
+}
 
 const taskStatusOptions = [
   { value: 'To do', label: 'To do' },
@@ -82,10 +90,15 @@ export default function NewTask() {
     return () => window.removeEventListener('beforeunload', handler)
   }, [dirty])
 
-  const projectOptions = (currentMember && currentUserMemberId && leadProjectIds.length
-    ? projects.filter((p) => leadProjectIds.includes(p.id))
-    : projects
-  ).map((p) => ({ value: p.id, label: `${p.projectId} – ${p.projectName}` }))
+  const canAddToAnyProject = isSuperAdmin || (currentAdminId && !currentMember) || currentMember?.role === 'Admin'
+  const projectOptions = (canAddToAnyProject
+    ? projects
+    : currentMember && currentUserMemberId && leadProjectIds.length
+      ? projects.filter((p) => leadProjectIds.includes(p.id))
+      : projects
+  )
+    .filter((p) => !p.isArchived && p.status !== 'Completed')
+    .map((p) => ({ value: p.id, label: `${p.projectId} – ${p.projectName}` }))
 
   const selectedProjectId = Form.useWatch('projectId', form)
   const projectDetail = selectedProjectId ? projectDetailsById[selectedProjectId] ?? null : null
@@ -100,7 +113,7 @@ export default function NewTask() {
       message.error('Please select a project.')
       return
     }
-    if (currentMember && currentUserMemberId && !leadProjectIds.includes(projectId)) {
+    if (!canAddToAnyProject && currentMember && currentUserMemberId && !leadProjectIds.includes(projectId)) {
       message.error('You can only add tasks to projects you lead.')
       return
     }
@@ -112,8 +125,33 @@ export default function NewTask() {
 
     const start = values.startDate as { format?: (s: string) => string } | undefined
     const end = values.endDate as { format?: (s: string) => string } | undefined
-    const startDate = start?.format?.('YYYY-MM-DD')
-    const endDate = end?.format?.('YYYY-MM-DD')
+    let startDate: string | undefined = start?.format?.('YYYY-MM-DD')
+    let endDate: string | undefined = end?.format?.('YYYY-MM-DD')
+
+    if (!projectAllowsTaskDates(project)) {
+      startDate = undefined
+      endDate = undefined
+    } else {
+      const projectStart = project.startDate?.trim() ? dayjs(project.startDate) : null
+      const projectEnd = project.endDate?.trim() ? dayjs(project.endDate) : null
+      if (startDate && projectStart && dayjs(startDate).isBefore(projectStart, 'day')) {
+        message.error(`Task start date cannot be earlier than the project start date (${project.startDate}).`)
+        return
+      }
+      if (endDate && projectEnd && dayjs(endDate).isAfter(projectEnd, 'day')) {
+        message.error(`Task end date cannot be later than the project end date (${project.endDate}).`)
+        return
+      }
+      if (startDate && endDate && dayjs(endDate).isBefore(dayjs(startDate), 'day')) {
+        message.error('Task end date cannot be earlier than start date.')
+        return
+      }
+    }
+
+    let status = (values.status as string) || 'To do'
+    if (status !== 'Completed' && startDate && endDate) {
+      status = 'In progress'
+    }
 
     const initialNote = String(values.initialNote ?? '').trim()
     const author = displayName || 'Current user'
@@ -125,7 +163,7 @@ export default function NewTask() {
       projectId: project.projectId,
       projectName: project.projectName,
       taskName: (values.taskName as string)?.trim() || '',
-      status: (values.status as string) || 'To do',
+      status,
       startDate,
       endDate,
       assignees: assignees.length ? assignees : undefined,
@@ -133,26 +171,47 @@ export default function NewTask() {
     }
 
     const assigneeNames = assignees.map((a) => a.name).join(', ') || '—'
+    const initialNoteText = notes.length ? (notes[0].content.slice(0, 80) + (notes[0].content.length > 80 ? '…' : '')) : '—'
+    const confirmLabelStyle = { width: 100, flexShrink: 0, color: 'rgba(0,0,0,0.45)', fontSize: 13 }
+    const confirmValueStyle = { flex: 1, fontSize: 13 }
+    const confirmRowStyle = { display: 'flex', gap: 12, marginBottom: 8, alignItems: 'flex-start' }
+    const confirmSectionStyle = { marginBottom: 16 }
+    const confirmSectionTitleStyle = { fontSize: 12, fontWeight: 600, color: 'rgba(0,0,0,0.65)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.5px' }
 
+    const projectDocId = projectId
     Modal.confirm({
       title: 'Create this task?',
       content: (
-        <div>
-          <div><b>Project:</b> {project.projectName} ({project.projectId})</div>
-          <div><b>Task:</b> {payload.taskName}</div>
-          <div><b>Status:</b> {payload.status}</div>
-          <div><b>Start / End:</b> {(payload.startDate || '—')} → {(payload.endDate || '—')}</div>
-          <div><b>Assignees:</b> {assigneeNames}</div>
-          <div><b>Notes:</b> {notes.length ? 'Yes' : 'No'}</div>
+        <div style={{ maxWidth: 420 }}>
+          <div style={confirmSectionStyle}>
+            <div style={confirmSectionTitleStyle}>Task</div>
+            <div style={confirmRowStyle}><span style={confirmLabelStyle}>Project</span><span style={confirmValueStyle}>{project.projectName} ({project.projectId})</span></div>
+            <div style={confirmRowStyle}><span style={confirmLabelStyle}>Task name</span><span style={confirmValueStyle}>{payload.taskName || '—'}</span></div>
+            <div style={confirmRowStyle}><span style={confirmLabelStyle}>Status</span><span style={confirmValueStyle}>{payload.status}</span></div>
+            <div style={confirmRowStyle}><span style={confirmLabelStyle}>Start date</span><span style={confirmValueStyle}>{payload.startDate || '—'}</span></div>
+            <div style={confirmRowStyle}><span style={confirmLabelStyle}>End date</span><span style={confirmValueStyle}>{payload.endDate || '—'}</span></div>
+          </div>
+          <div style={confirmSectionStyle}>
+            <div style={confirmSectionTitleStyle}>Assignees</div>
+            <div style={confirmRowStyle}><span style={confirmLabelStyle}>Members</span><span style={confirmValueStyle}>{assigneeNames}</span></div>
+          </div>
+          <div style={confirmSectionStyle}>
+            <div style={confirmSectionTitleStyle}>Other</div>
+            <div style={confirmRowStyle}><span style={confirmLabelStyle}>Notes</span><span style={confirmValueStyle}>{initialNoteText}</span></div>
+          </div>
         </div>
       ),
       okText: 'Create task',
       cancelText: 'Cancel',
-      onOk: () => {
-        addTask(payload)
-        message.success('Task added.')
-        setDirty(false)
-        navigate('/tasks')
+      onOk: async () => {
+        try {
+          await addTask(projectDocId, payload)
+          message.success('Task saved.')
+          setDirty(false)
+          navigate('/tasks')
+        } catch (err) {
+          message.error(err instanceof Error ? err.message : 'Failed to save task.')
+        }
       },
     })
   }
@@ -192,13 +251,39 @@ export default function NewTask() {
               </Form.Item>
             </Col>
             <Col xs={24} md={12}>
-              <Form.Item name="startDate" label="Start Date">
-                <DatePicker style={{ width: '100%' }} />
+              <Form.Item
+                name="startDate"
+                label="Start Date"
+                help={projectDetail && !projectAllowsTaskDates(projectDetail) ? 'Parent project has no start/end date; task dates are not allowed.' : undefined}
+              >
+                <DatePicker
+                  style={{ width: '100%' }}
+                  disabled={!projectAllowsTaskDates(projectDetail)}
+                  disabledDate={(d) => {
+                    if (!d || !projectDetail) return false
+                    const projectStart = projectDetail.startDate?.trim() ? dayjs(projectDetail.startDate) : null
+                    const projectEnd = projectDetail.endDate?.trim() ? dayjs(projectDetail.endDate) : null
+                    if (projectStart && d.isBefore(projectStart, 'day')) return true
+                    if (projectEnd && d.isAfter(projectEnd, 'day')) return true
+                    return false
+                  }}
+                />
               </Form.Item>
             </Col>
             <Col xs={24} md={12}>
               <Form.Item name="endDate" label="End Date">
-                <DatePicker style={{ width: '100%' }} />
+                <DatePicker
+                  style={{ width: '100%' }}
+                  disabled={!projectAllowsTaskDates(projectDetail)}
+                  disabledDate={(d) => {
+                    if (!d || !projectDetail) return false
+                    const projectStart = projectDetail.startDate?.trim() ? dayjs(projectDetail.startDate) : null
+                    const projectEnd = projectDetail.endDate?.trim() ? dayjs(projectDetail.endDate) : null
+                    if (projectStart && d.isBefore(projectStart, 'day')) return true
+                    if (projectEnd && d.isAfter(projectEnd, 'day')) return true
+                    return false
+                  }}
+                />
               </Form.Item>
             </Col>
             <Col xs={24} md={12}>

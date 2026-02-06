@@ -2,11 +2,12 @@ import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { Card, Form, Input, Select, Button, Space, Typography, Tag, message, Row, Col, Modal, Spin } from 'antd'
 import { ArrowLeftOutlined, DeleteOutlined } from '@ant-design/icons'
-import { getMemberById, updateMember, type MemberDetail } from '../data/members'
+import { appendMemberActivity, getMemberById, updateMember, type MemberDetail } from '../data/members'
 import AvatarPicker from '../components/AvatarPicker'
 import { useCurrentUser } from '../context/CurrentUserContext'
+import { useProjectMeta } from '../context/ProjectMetaContext'
 import { SYSTEM_ROLE } from '../constants/roles'
-import { ADMIN_POSITION_OPTIONS } from '../data/admins'
+import type { ProjectActivity } from '../types/project'
 
 const departmentOptions = [
   { value: 'Engineering', label: 'Engineering' },
@@ -16,22 +17,13 @@ const departmentOptions = [
   { value: 'Operations', label: 'Operations' },
 ]
 
-const jobTypeOptions = [
-  { value: 'Developer', label: 'Developer' },
-  { value: 'Designer', label: 'Designer' },
-  { value: 'QA', label: 'QA' },
-  { value: 'PM', label: 'PM' },
-  { value: 'Coordinator', label: 'Coordinator' },
-  { value: 'Marketer', label: 'Marketer' },
-  { value: 'DevOps', label: 'DevOps' },
-  { value: 'Researcher', label: 'Researcher' },
-  { value: 'Analyst', label: 'Analyst' },
-]
-
 export default function EditMember() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
-  const { isSuperAdmin, currentUserMemberId, refreshMemberProfile } = useCurrentUser()
+  const { isSuperAdmin, currentUserMemberId, refreshMemberProfile, displayName } = useCurrentUser()
+  const { jobTypes, positions } = useProjectMeta()
+  const jobTypeOptions = jobTypes.map((v) => ({ value: v, label: v }))
+  const positionOptions = positions.map((v) => ({ value: v, label: v }))
   const [form] = Form.useForm()
   const [member, setMember] = useState<MemberDetail | null>(null)
   const [loading, setLoading] = useState(!!id)
@@ -106,6 +98,14 @@ export default function EditMember() {
         accountStatus: (values.accountStatus as 'Active' | 'Inactive') ?? 'Active',
         avatarUrl: values.profileImage ? String(values.profileImage) : null,
       })
+      const activity: ProjectActivity = {
+        key: `activity-${Date.now()}`,
+        type: 'profile_updated',
+        description: 'Updated profile details',
+        author: displayName || 'Current user',
+        createdAt: new Date().toISOString(),
+      }
+      appendMemberActivity(member.memberId, activity).catch(() => {})
       const isEditingSelf = currentUserMemberId && member.memberId.toUpperCase() === currentUserMemberId.toUpperCase()
       if (isEditingSelf) await refreshMemberProfile()
       message.success('Profile updated successfully.')
@@ -231,7 +231,7 @@ export default function EditMember() {
               </Form.Item>
 
               <Form.Item name="position" label="Position">
-                <Select placeholder="Select position" allowClear showSearch optionFilterProp="label" options={ADMIN_POSITION_OPTIONS} />
+                <Select placeholder="Select position" allowClear showSearch optionFilterProp="label" options={positionOptions} />
               </Form.Item>
 
               <Form.Item name="accountStatus" label="Account status">

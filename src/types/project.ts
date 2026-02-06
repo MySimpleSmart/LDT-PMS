@@ -22,6 +22,14 @@ export interface ProjectNote {
   createdAt: string
 }
 
+export interface ProjectActivity {
+  key: string
+  type: string
+  description: string
+  author: string
+  createdAt: string
+}
+
 export interface ProjectFile {
   key: string
   name: string
@@ -33,6 +41,14 @@ export interface ProjectFile {
 export interface ProjectTaskAssignee {
   memberId: string
   name: string
+}
+
+/** A note on a project task (same shape as TaskNote) */
+export interface ProjectTaskNote {
+  key: string
+  author: string
+  content: string
+  createdAt: string
 }
 
 /** Task status; 'Completed' counts toward progress */
@@ -48,4 +64,6 @@ export interface ProjectTask {
   assigneeName?: string
   startDate?: string
   endDate?: string
+  /** Comments/notes on the task (persisted in project document) */
+  notes?: ProjectTaskNote[]
 }

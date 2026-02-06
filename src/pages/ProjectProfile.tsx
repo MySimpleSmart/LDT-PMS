@@ -23,16 +23,19 @@ import {
   Divider,
 } from 'antd'
 import type { TabsProps } from 'antd'
-import { ArrowLeftOutlined, EditOutlined, TeamOutlined, CommentOutlined, FileOutlined, CalendarOutlined, UserOutlined, CheckSquareOutlined, PlusOutlined, UserAddOutlined, DeleteOutlined, UploadOutlined, CheckCircleOutlined, CloseCircleOutlined, AppstoreOutlined, InboxOutlined, CrownOutlined, AuditOutlined } from '@ant-design/icons'
+import { ArrowLeftOutlined, EditOutlined, TeamOutlined, CommentOutlined, FileOutlined, CalendarOutlined, UserOutlined, CheckSquareOutlined, PlusOutlined, UserAddOutlined, DeleteOutlined, UploadOutlined, CheckCircleOutlined, CloseCircleOutlined, AppstoreOutlined, InboxOutlined, CrownOutlined, AuditOutlined, HistoryOutlined, RollbackOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
 
 import { getProjectById, updateProjectById, deleteProject, isProjectOverdue, type ProjectDetail } from '../data/projects'
-import { getMembersList } from '../data/members'
+import { appendMemberActivity, getMembersList } from '../data/members'
 import { getTaskAssignees } from '../data/tasks'
 import { useCurrentUser } from '../context/CurrentUserContext'
 import { useProjectMeta } from '../context/ProjectMetaContext'
 import { useUnsavedChanges } from '../context/UnsavedChangesContext'
-import type { ProjectFile, ProjectMember, ProjectTask } from '../types/project'
+import type { ProjectFile, ProjectMember, ProjectNote, ProjectTask, ProjectActivity } from '../types/project'
+
+const MAX_PROJECT_NOTES = 20
+import ActivityLogTimeline from '../components/ActivityLogTimeline'
 import { useTasks } from '../context/TasksContext'
 
 const priorityColors: Record<string, string> = {
@@ -43,6 +46,18 @@ const priorityColors: Record<string, string> = {
 }
 const statusTagColor = (status: string) =>
   status === 'Completed' ? 'green' : status === 'Pending completion' ? 'orange' : 'default'
+
+function taskStatusTagColor(s: string): string {
+  if (s === 'Completed') return 'green'
+  if (s === 'In progress') return 'blue'
+  return 'default'
+}
+
+function excerpt(text: string, max = 60): string {
+  const t = String(text || '').trim()
+  if (t.length <= max) return t
+  return `${t.slice(0, Math.max(0, max - 1))}…`
+}
 
 function formatDate(d: string) {
   try {
@@ -91,7 +106,7 @@ export default function ProjectProfile() {
   const { currentAdminId, currentMember, isSuperAdmin, currentUserMemberId, displayName } = useCurrentUser()
   const canConfirmRejectPending = (isSuperAdmin || currentAdminId) && !currentMember
   const { categories, tags } = useProjectMeta()
-  const { tasks: globalTasks, updateTask } = useTasks()
+  const { tasks: globalTasks, updateTask, addTask, removeTask } = useTasks()
   const { setDirty: setGlobalDirty, confirmNavigation } = useUnsavedChanges()
 
   // IMPORTANT: keep project reference stable while editing
@@ -124,7 +139,8 @@ export default function ProjectProfile() {
     if (!project) return false
     if (isSuperAdmin) return true
     if (!currentUserMemberId) return false
-    const leadMember = project.members.find((m) => m.role === 'Lead')
+    const members = Array.isArray(project.members) ? project.members : []
+    const leadMember = members.find((m) => m && m.role === 'Lead')
     return leadMember?.memberId === currentUserMemberId
   }, [project, isSuperAdmin, currentUserMemberId])
   const canManageProjectFiles = canConfirmRejectPending || isLeadOfThisProject
@@ -140,17 +156,36 @@ export default function ProjectProfile() {
   const [editDrawerDirty, setEditDrawerDirty] = useState(false)
   const [activeTab, setActiveTab] = useState('overview')
   const [newComment, setNewComment] = useState('')
+  const [editingNote, setEditingNote] = useState<ProjectNote | null>(null)
+  const [editCommentContent, setEditCommentContent] = useState('')
   /** When a new Lead is added, previous Lead is demoted to Contributor (each project has only one Lead) */
   const [leadRoleOverrides, setLeadRoleOverrides] = useState<Record<string, string>>({})
   const [editForm] = Form.useForm()
   const [addMemberForm] = Form.useForm()
   const [addTaskForm] = Form.useForm()
   const commentTextareaRef = useRef<HTMLTextAreaElement>(null)
+  const activityBackfilledRef = useRef<string | null>(null)
   const [allMembers, setAllMembers] = useState<{ memberId: string; name: string }[]>([])
-
   useEffect(() => {
     getMembersList().then(setAllMembers).catch(() => setAllMembers([]))
   }, [])
+
+  useEffect(() => {
+    if (!id || !project || (Array.isArray(project.activityLog) && project.activityLog.length > 0) || activityBackfilledRef.current === id) return
+    activityBackfilledRef.current = id
+    const initial: ProjectActivity = {
+      key: `activity-${Date.now()}`,
+      type: 'project_created',
+      description: 'Project created',
+      author: project.createdBy || 'Unknown',
+      createdAt: project.createdAt || new Date().toISOString(),
+    }
+    let cancelled = false
+    updateProjectById(id, { activityLog: [initial] })
+      .then(() => { if (!cancelled) setProjectVersion((v) => v + 1) })
+      .catch(() => { activityBackfilledRef.current = null })
+    return () => { cancelled = true }
+  }, [id, project])
 
   const categoryOptions = categories.map((c) => ({ value: c, label: c }))
   const tagOptions = tags.map((t) => ({ value: t, label: t }))
@@ -186,14 +221,107 @@ export default function ProjectProfile() {
     }
   }, [activeTab])
 
-  const onAddComment = (content: string) => {
-    if (!content.trim()) return
+  const pushActivity = (type: string, description: string): ProjectActivity => ({
+    key: `activity-${Date.now()}`,
+    type,
+    description,
+    author: displayName || 'Current user',
+    createdAt: new Date().toISOString(),
+  })
+
+  const logToProfileActivity = (activity: ProjectActivity) => {
+    const memberId = currentUserMemberId
+    if (!memberId) return
+    const projectName = project?.projectName?.trim()
+    const description = projectName ? `Project "${projectName}": ${activity.description}` : activity.description
+    appendMemberActivity(memberId, { ...activity, key: `profile-${activity.key}`, description }).catch(() => {})
+  }
+
+  const canEditDeleteNote = (note: ProjectNote) => {
+    const isAdminOrLead = isLeadOfThisProject || isSuperAdmin || (currentAdminId && !currentMember)
+    const isOwner = note.author === (displayName || 'Current user')
+    return Boolean(isAdminOrLead || isOwner)
+  }
+
+  const onAddComment = async (content: string) => {
+    if (!content.trim() || !id) return
+    const currentNotes = Array.isArray(project.notes) ? project.notes : []
+    if (currentNotes.length >= MAX_PROJECT_NOTES) {
+      message.error(`Maximum ${MAX_PROJECT_NOTES} comments allowed.`)
+      return
+    }
     const author = displayName || 'Current user'
-    setLocalNotes((prev) => [
-      ...prev,
-      { key: `local-${Date.now()}`, author, content: content.trim(), createdAt: new Date().toISOString() },
-    ])
-    message.success('Comment added.')
+    const newNote: ProjectNote = {
+      key: `note-${Date.now()}`,
+      author,
+      content: content.trim(),
+      createdAt: new Date().toISOString(),
+    }
+    const notes = [...currentNotes, newNote]
+    const activity = pushActivity('comment_added', 'Added a comment')
+    const activityLog = [...(Array.isArray(project.activityLog) ? project.activityLog : []), activity]
+    try {
+      await updateProjectById(id, { notes, activityLog })
+      logToProfileActivity(activity)
+      const updated = await getProjectById(id)
+      if (updated) setProject(updated)
+      message.success('Comment added.')
+      setNewComment('')
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : 'Failed to save comment.')
+    }
+  }
+
+  const onEditNote = (note: ProjectNote) => {
+    setEditingNote(note)
+    setEditCommentContent(note.content)
+  }
+
+  const onSaveEditNote = async () => {
+    if (!editingNote || !id || !editCommentContent.trim()) return
+    const currentNotes = Array.isArray(project.notes) ? project.notes : []
+    const notes = currentNotes.map((n) =>
+      n.key === editingNote.key ? { ...n, content: editCommentContent.trim() } : n
+    )
+    const activity = pushActivity('comment_edited', 'Edited a comment')
+    const activityLog = [...(project.activityLog || []), activity]
+    try {
+      await updateProjectById(id, { notes, activityLog })
+      logToProfileActivity(activity)
+      const updated = await getProjectById(id)
+      if (updated) setProject(updated)
+      message.success('Comment updated.')
+      setEditingNote(null)
+      setEditCommentContent('')
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : 'Failed to update comment.')
+    }
+  }
+
+  const onDeleteNote = (note: ProjectNote) => {
+    if (!id) return
+    Modal.confirm({
+      title: 'Delete comment?',
+      content: 'This cannot be undone.',
+      okText: 'Delete',
+      okButtonProps: { danger: true },
+      cancelText: 'Cancel',
+      onOk: async () => {
+        const currentNotes = Array.isArray(project.notes) ? project.notes : []
+        const notes = currentNotes.filter((n) => n.key !== note.key)
+        const activity = pushActivity('comment_deleted', 'Deleted a comment')
+        const activityLog = [...(Array.isArray(project.activityLog) ? project.activityLog : []), activity]
+        try {
+          await updateProjectById(id, { notes, activityLog })
+          logToProfileActivity(activity)
+          const updated = await getProjectById(id)
+          if (updated) setProject(updated)
+          message.success('Comment deleted.')
+        } catch (err) {
+          message.error(err instanceof Error ? err.message : 'Failed to delete comment.')
+        }
+      },
+    })
   }
 
   const onEditFinish = (values: Record<string, unknown>, fromOverview = false) => {
@@ -223,11 +351,15 @@ export default function ProjectProfile() {
           // Only Super Admin can set Completed; Project Lead sets Pending completion (admin reviews and completes)
           if (updates.status === 'Completed') {
             // Update base project tasks (those coming from data/projects.ts)
-            const completedBaseTasks = project.tasks.map((t) => ({
+            const baseTasks = Array.isArray(project.tasks) ? project.tasks : []
+            const completedBaseTasks = baseTasks.map((t) => ({
               ...t,
               status: 'Completed',
             }))
-            await updateProjectById(id, { ...updates, tasks: completedBaseTasks })
+            const activity = pushActivity('project_completed', 'Project marked as Completed')
+            const activityLog = [...(project.activityLog || []), activity]
+            await updateProjectById(id, { ...updates, tasks: completedBaseTasks, activityLog })
+            logToProfileActivity(activity)
 
             // Update any local (session-only) tasks in this profile view
             setLocalTasks((prev) => prev.map((t) => ({ ...t, status: 'Completed' })))
@@ -237,12 +369,17 @@ export default function ProjectProfile() {
               .filter((t) => t.projectId === project.projectId)
               .forEach((t) => updateTask(t.id, { status: 'Completed' }))
           } else {
-            await updateProjectById(id, updates)
+            const activity = pushActivity('project_updated', 'Updated project details')
+            const activityLog = [...(project.activityLog || []), activity]
+            await updateProjectById(id, { ...updates, activityLog })
+            logToProfileActivity(activity)
           }
         } else if (id) {
-          await updateProjectById(id, updates)
+          const activity = pushActivity('project_updated', 'Updated project details')
+          const activityLog = [...(project.activityLog || []), activity]
+          await updateProjectById(id, { ...updates, activityLog })
+          logToProfileActivity(activity)
         }
-        console.log('Update project:', id, updates)
         if (updates.status === 'Pending completion') {
           message.success('Project marked for completion. An admin will review and complete it.')
         } else {
@@ -271,8 +408,12 @@ export default function ProjectProfile() {
 
   const confirmPendingProject = async () => {
     if (!id || !project) return
-    const completedBaseTasks = project.tasks.map((t) => ({ ...t, status: 'Completed' }))
-    await updateProjectById(id, { status: 'Completed', tasks: completedBaseTasks })
+    const baseTasks = Array.isArray(project.tasks) ? project.tasks : []
+    const completedBaseTasks = baseTasks.map((t) => ({ ...t, status: 'Completed' }))
+    const activity = pushActivity('project_completed', 'Project confirmed and marked as Completed')
+    const activityLog = [...(project.activityLog || []), activity]
+    await updateProjectById(id, { status: 'Completed', tasks: completedBaseTasks, activityLog })
+    logToProfileActivity(activity)
     setLocalTasks((prev) => prev.map((t) => ({ ...t, status: 'Completed' })))
     globalTasks.filter((t) => t.projectId === project.projectId).forEach((t) => updateTask(t.id, { status: 'Completed' }))
     message.success('Project confirmed and marked as Completed.')
@@ -280,8 +421,11 @@ export default function ProjectProfile() {
   }
 
   const rejectPendingProject = async () => {
-    if (!id) return
-    await updateProjectById(id, { status: 'In Progress' })
+    if (!id || !project) return
+    const activity = pushActivity('status_changed', 'Project status set back to In Progress')
+    const activityLog = [...(project.activityLog || []), activity]
+    await updateProjectById(id, { status: 'In Progress', activityLog })
+    logToProfileActivity(activity)
     message.success('Project rejected. Status set back to In Progress.')
     setProjectVersion((v) => v + 1)
   }
@@ -330,6 +474,13 @@ export default function ProjectProfile() {
     setActiveTab('notes')
   }
 
+  const activityLogSorted = useMemo(() => {
+    const log = Array.isArray(project?.activityLog) ? project?.activityLog : []
+    return [...log]
+      .filter((a) => a && (a.createdAt || a.key))
+      .sort((a, b) => (new Date(b.createdAt || 0).getTime()) - (new Date(a.createdAt || 0).getTime()))
+  }, [project?.activityLog])
+
   if (!project) {
     return (
       <div>
@@ -341,49 +492,89 @@ export default function ProjectProfile() {
     )
   }
 
+  const projectMembers = Array.isArray(project.members) ? project.members : []
+  const projectTasks = Array.isArray(project.tasks) ? project.tasks : []
+  const projectFiles = Array.isArray(project.files) ? project.files : []
+  const projectNotes = Array.isArray(project.notes) ? project.notes : []
+
   const effectiveMembers: ProjectMember[] = [
-    ...project.members.filter((m) => !removedMemberIds.includes(m.memberId)),
+    ...projectMembers.filter((m) => m && !removedMemberIds.includes(m.memberId)),
     ...localMembers,
   ].map((m) => ({ ...m, role: leadRoleOverrides[m.memberId] ?? m.role }))
-  const effectiveTasks: ProjectTask[] = [...project.tasks, ...localTasks]
+  const effectiveTasks: ProjectTask[] = [...projectTasks, ...localTasks]
   const doneStatuses = ['Completed']
   const effectiveProgress = effectiveTasks.length
-    ? Math.round((effectiveTasks.filter((t) => doneStatuses.includes(t.status)).length / effectiveTasks.length) * 100)
-    : project.progress
+    ? Math.round((effectiveTasks.filter((t) => t && doneStatuses.includes(t.status)).length / effectiveTasks.length) * 100)
+    : (typeof project.progress === 'number' ? project.progress : 0)
   const effectiveFiles: ProjectFile[] = [
-    ...project.files.filter((f) => !removedFileKeys.includes(f.key)),
+    ...projectFiles.filter((f) => f && !removedFileKeys.includes(f.key)),
     ...localFiles,
   ]
 
-  const onAddMember = (values: { memberId: string; role: string }) => {
+  const onAddMember = async (values: { memberId: string; role: string }) => {
     const chosen = allMembers.find((m) => m.memberId === values.memberId)
-    if (!chosen) return
+    if (!chosen || !id) return
     const newRole = values.role || 'Contributor'
-    // Each project has only one Lead: if adding a Lead, demote the current Lead to Contributor
-    if (newRole === 'Lead') {
-      const currentLead = [...project.members.filter((m) => !removedMemberIds.includes(m.memberId)), ...localMembers].find((m) => m.role === 'Lead')
-      if (currentLead && currentLead.memberId !== chosen.memberId) {
-        setLeadRoleOverrides((prev) => ({ ...prev, [currentLead.memberId]: 'Contributor' }))
-      }
+    let list: ProjectMember[] = [
+      ...projectMembers.filter((m) => !removedMemberIds.includes(m.memberId)),
+      ...localMembers,
+    ]
+    const currentLead = list.find((m) => (leadRoleOverrides[m.memberId] ?? m.role) === 'Lead')
+    if (newRole === 'Lead' && currentLead && currentLead.memberId !== chosen.memberId) {
+      list = list.map((m) => (m.memberId === currentLead.memberId ? { ...m, role: 'Contributor' } : m))
+      setLeadRoleOverrides((prev) => ({ ...prev, [currentLead.memberId]: 'Contributor' }))
     }
-    setLocalMembers((prev) => [...prev, { key: `local-m-${Date.now()}`, memberId: chosen.memberId, name: chosen.name, role: newRole }])
-    message.success('Member added to project.')
-    addMemberForm.resetFields()
-    setAddMemberModalOpen(false)
+    list = list.map((m) => ({ ...m, role: leadRoleOverrides[m.memberId] ?? m.role }))
+    list.push({ key: `mem-${Date.now()}`, memberId: chosen.memberId, name: chosen.name, role: newRole })
+    const activity = pushActivity('member_added', `Added ${chosen.name} as ${newRole}`)
+    const activityLog = [...(project.activityLog || []), activity]
+    try {
+      await updateProjectById(id, { members: list, activityLog })
+      logToProfileActivity(activity)
+      const updated = await getProjectById(id)
+      if (updated) setProject(updated)
+      setLocalMembers((prev) => prev.filter((m) => m.memberId !== chosen.memberId))
+      message.success('Member added to project.')
+      addMemberForm.resetFields()
+      setAddMemberModalOpen(false)
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : 'Failed to save member to project.')
+    }
   }
 
-  const onSetProjectRole = (record: ProjectMember, newRole: 'Lead' | 'Contributor' | 'Moderator') => {
+  const onSetProjectRole = async (record: ProjectMember, newRole: 'Lead' | 'Contributor' | 'Moderator') => {
+    if (!id) return
+    const updates: Record<string, string> = { [record.memberId]: newRole }
     if (newRole === 'Lead') {
       const currentLead = effectiveMembers.find((m) => m.role === 'Lead')
-      setLeadRoleOverrides((prev) => ({
-        ...prev,
-        [record.memberId]: 'Lead',
-        ...(currentLead && currentLead.memberId !== record.memberId ? { [currentLead.memberId]: 'Contributor' } : {}),
-      }))
-      message.success(`${record.name} is now Project Lead.${currentLead && currentLead.memberId !== record.memberId ? ` ${currentLead.name} is now Contributor.` : ''}`)
-    } else {
-      setLeadRoleOverrides((prev) => ({ ...prev, [record.memberId]: newRole }))
-      message.success(`${record.name} is now ${newRole}.`)
+      if (currentLead && currentLead.memberId !== record.memberId) {
+        updates[currentLead.memberId] = 'Contributor'
+      }
+    }
+    const list: ProjectMember[] = [
+      ...projectMembers.filter((m) => !removedMemberIds.includes(m.memberId)),
+      ...localMembers,
+    ].map((m) => ({ ...m, role: updates[m.memberId] ?? leadRoleOverrides[m.memberId] ?? m.role }))
+    const activity = pushActivity('member_role_changed', `${record.name} set to ${newRole}`)
+    const activityLog = [...(project.activityLog || []), activity]
+    try {
+      await updateProjectById(id, { members: list, activityLog })
+      logToProfileActivity(activity)
+      const updated = await getProjectById(id)
+      if (updated) setProject(updated)
+      setLeadRoleOverrides((prev) => {
+        const next = { ...prev }
+        Object.keys(updates).forEach((mid) => delete next[mid])
+        return next
+      })
+      const currentLead = effectiveMembers.find((m) => m.role === 'Lead')
+      message.success(
+        newRole === 'Lead'
+          ? `${record.name} is now Project Lead.${currentLead && currentLead.memberId !== record.memberId ? ` ${currentLead.name} is now Contributor.` : ''}`
+          : `${record.name} is now ${newRole}.`
+      )
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : 'Failed to update member role.')
     }
   }
 
@@ -399,21 +590,36 @@ export default function ProjectProfile() {
       okText: 'Remove',
       okButtonProps: { danger: true },
       cancelText: 'Cancel',
-      onOk: () => {
-        if (isLocal) setLocalMembers((prev) => prev.filter((m) => m.memberId !== record.memberId))
-        else setRemovedMemberIds((prev) => [...prev, record.memberId])
-        setLeadRoleOverrides((prev) => {
-          const next = { ...prev }
-          delete next[record.memberId]
-          return next
-        })
-        message.success('Member removed from project.')
+      onOk: async () => {
+        if (!id) return
+        const list: ProjectMember[] = [
+          ...projectMembers.filter((m) => !removedMemberIds.includes(m.memberId) && m.memberId !== record.memberId),
+          ...localMembers.filter((m) => m.memberId !== record.memberId),
+        ].map((m) => ({ ...m, role: leadRoleOverrides[m.memberId] ?? m.role }))
+        const activity = pushActivity('member_removed', `Removed ${record.name} from project`)
+        const activityLog = [...(project.activityLog || []), activity]
+        try {
+          await updateProjectById(id, { members: list, activityLog })
+          logToProfileActivity(activity)
+          const updated = await getProjectById(id)
+          if (updated) setProject(updated)
+          setLocalMembers((prev) => prev.filter((m) => m.memberId !== record.memberId))
+          setRemovedMemberIds((prev) => prev.filter((mid) => mid !== record.memberId))
+          setLeadRoleOverrides((prev) => {
+            const next = { ...prev }
+            delete next[record.memberId]
+            return next
+          })
+          message.success('Member removed from project.')
+        } catch (err) {
+          message.error(err instanceof Error ? err.message : 'Failed to remove member from project.')
+        }
       },
     })
   }
 
-  const onAddTask = (values: { title: string; status: string; assigneeMemberIds?: string[] }) => {
-    if (!canManageProjectFiles) {
+  const onAddTask = async (values: { title: string; status: string; assigneeMemberIds?: string[] }) => {
+    if (!canManageProjectFiles || !id) {
       message.error('Only the project lead or an admin can add tasks to this project.')
       return
     }
@@ -422,17 +628,27 @@ export default function ProjectProfile() {
       .map((mid) => effectiveMembers.find((m) => m.memberId === mid))
       .filter(Boolean)
       .map((m) => ({ memberId: m!.memberId, name: m!.name }))
-    setLocalTasks((prev) => [
-      ...prev,
-      {
-        key: `local-t-${Date.now()}`,
-        title: values.title.trim(),
+    try {
+      await addTask(id, {
+        taskName: values.title.trim(),
         status: values.status || 'To do',
         assignees: assignees.length ? assignees : undefined,
-      },
-    ])
-    message.success('Task added.')
-    addTaskForm.resetFields()
+        projectId: project.projectId,
+        projectName: project.projectName,
+      })
+      const updated = await getProjectById(id)
+      if (updated) setProject(updated)
+      const activity = pushActivity('task_added', `Added task "${values.title.trim()}"`)
+      const activityLog = [...(updated?.activityLog ?? []), activity]
+      await updateProjectById(id, { activityLog })
+      logToProfileActivity(activity)
+      const refreshed = await getProjectById(id)
+      if (refreshed) setProject(refreshed)
+      message.success('Task saved.')
+      addTaskForm.resetFields()
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : 'Failed to save task.')
+    }
   }
 
   const onAddFile = (file: { name: string; size?: number }) => {
@@ -471,6 +687,97 @@ export default function ProjectProfile() {
         message.success('File removed.')
       },
     })
+  }
+
+  const getTaskId = (record: ProjectTask) => (id ? `${id}-${record.key}` : '')
+
+  const handleMarkCompleteTask = (record: ProjectTask) => {
+    if (record.status === 'Completed') return
+    if (!canManageProjectFiles) {
+      message.error('Only the project lead or an admin can mark tasks as completed.')
+      return
+    }
+    const taskId = getTaskId(record)
+    if (!taskId) return
+    Modal.confirm({
+      title: 'Mark task as completed?',
+      content: 'This will set the task status to Completed.',
+      okText: 'Mark as completed',
+      cancelText: 'Cancel',
+      onOk: async () => {
+        try {
+          await updateTask(taskId, { status: 'Completed' })
+          const activity = pushActivity('task_completed', `Task "${record.title}" marked as completed`)
+          const activityLog = [...(Array.isArray(project.activityLog) ? project.activityLog : []), activity]
+          await updateProjectById(id!, { activityLog })
+          logToProfileActivity(activity)
+          const updated = await getProjectById(id!)
+          if (updated) setProject(updated)
+          message.success('Task marked as completed.')
+        } catch (err) {
+          message.error(err instanceof Error ? err.message : 'Failed to update task.')
+        }
+      },
+    })
+  }
+
+  const handleRedoTask = (record: ProjectTask) => {
+    if (record.status !== 'Completed') return
+    if (!canManageProjectFiles) return
+    const taskId = getTaskId(record)
+    if (!taskId) return
+    Modal.confirm({
+      title: 'Reopen task?',
+      content: 'This will set the task status back to In progress.',
+      okText: 'Reopen',
+      cancelText: 'Cancel',
+      onOk: async () => {
+        try {
+          await updateTask(taskId, { status: 'In progress' })
+          const activity = pushActivity('task_reopened', `Task "${record.title}" reopened`)
+          const activityLog = [...(Array.isArray(project.activityLog) ? project.activityLog : []), activity]
+          await updateProjectById(id!, { activityLog })
+          logToProfileActivity(activity)
+          const updated = await getProjectById(id!)
+          if (updated) setProject(updated)
+          message.success('Task reopened.')
+        } catch (err) {
+          message.error(err instanceof Error ? err.message : 'Failed to update task.')
+        }
+      },
+    })
+  }
+
+  const handleRemoveTaskFromProject = (record: ProjectTask) => {
+    if (!canManageProjectFiles) return
+    const taskId = getTaskId(record)
+    if (!taskId) return
+    Modal.confirm({
+      title: 'Remove task?',
+      content: `This will permanently remove "${record.title}" from the project. This cannot be undone.`,
+      okText: 'Remove',
+      okButtonProps: { danger: true },
+      cancelText: 'Cancel',
+      onOk: async () => {
+        try {
+          await removeTask(taskId)
+          const activity = pushActivity('task_removed', `Task "${record.title}" removed from project`)
+          const activityLog = [...(Array.isArray(project.activityLog) ? project.activityLog : []), activity]
+          await updateProjectById(id!, { activityLog })
+          logToProfileActivity(activity)
+          const updated = await getProjectById(id!)
+          if (updated) setProject(updated)
+          message.success('Task removed.')
+        } catch (err) {
+          message.error(err instanceof Error ? err.message : 'Failed to remove task.')
+        }
+      },
+    })
+  }
+
+  const openTaskOnTasksPage = (record: ProjectTask) => {
+    const taskId = getTaskId(record)
+    if (taskId) navigate('/tasks', { state: { openTaskId: taskId } })
   }
 
   const memberColumns = [
@@ -525,6 +832,22 @@ export default function ProjectProfile() {
     { title: 'Author', dataIndex: 'author', key: 'author' },
     { title: 'Content', dataIndex: 'content', key: 'content' },
     { title: 'Date', dataIndex: 'createdAt', key: 'createdAt', render: (d: string) => formatDate(d) },
+    {
+      title: 'Action',
+      key: 'action',
+      width: 120,
+      render: (_: unknown, record: ProjectNote) =>
+        canEditDeleteNote(record) ? (
+          <Space size="small">
+            <Button type="link" size="small" icon={<EditOutlined />} onClick={() => onEditNote(record)}>
+              Edit
+            </Button>
+            <Button type="link" size="small" danger icon={<DeleteOutlined />} onClick={() => onDeleteNote(record)}>
+              Delete
+            </Button>
+          </Space>
+        ) : null,
+    },
   ]
   const fileColumns = [
     { title: 'File', dataIndex: 'name', key: 'name' },
@@ -546,11 +869,52 @@ export default function ProjectProfile() {
       : []),
   ]
   const taskColumns = [
-    { title: 'Task', dataIndex: 'title', key: 'title' },
-    { title: 'Status', dataIndex: 'status', key: 'status' },
+    {
+      title: '',
+      key: 'complete',
+      width: 48,
+      align: 'center' as const,
+      render: (_: unknown, record: ProjectTask) => {
+        if (record.status === 'Completed') {
+          return canManageProjectFiles ? (
+            <Tooltip title="Reopen task">
+              <RollbackOutlined
+                style={{ color: '#1890ff', fontSize: 20, cursor: 'pointer' }}
+                onClick={() => handleRedoTask(record)}
+              />
+            </Tooltip>
+          ) : (
+            <CheckCircleOutlined style={{ color: '#52c41a', fontSize: 20 }} title="Completed" />
+          )
+        }
+        if (canManageProjectFiles) {
+          return (
+            <Tooltip title="Mark as completed">
+              <CheckCircleOutlined
+                style={{ color: 'rgba(0,0,0,0.25)', fontSize: 20, cursor: 'pointer' }}
+                onClick={() => handleMarkCompleteTask(record)}
+              />
+            </Tooltip>
+          )
+        }
+        return null
+      },
+    },
+    { title: 'Task Name', dataIndex: 'title', key: 'title', width: 200 },
+    {
+      title: 'Status',
+      dataIndex: 'status',
+      key: 'status',
+      width: 140,
+      render: (status: string) => {
+        const displayStatus = status === 'Pending completion' ? 'In progress' : status
+        return <Tag color={taskStatusTagColor(displayStatus)}>{displayStatus}</Tag>
+      },
+    },
     {
       title: 'Assignees',
       key: 'assignees',
+      width: 200,
       render: (_: unknown, record: ProjectTask) => {
         const assignees = getTaskAssignees(record)
         if (!assignees.length) return '—'
@@ -563,6 +927,46 @@ export default function ProjectProfile() {
         )
       },
     },
+    { title: 'Start Date', dataIndex: 'startDate', key: 'startDate', width: 110, render: (d: string) => d || '—' },
+    { title: 'End Date', dataIndex: 'endDate', key: 'endDate', width: 110, render: (d: string) => d || '—' },
+    {
+      title: 'Notes',
+      key: 'notes',
+      width: 260,
+      render: (_: unknown, record: ProjectTask) => {
+        const notes = record.notes ?? []
+        if (!notes.length) return '—'
+        const last = notes[notes.length - 1]
+        const preview = excerpt(last.content || '', 60)
+        return (
+          <Space size={6} wrap={false}>
+            <Tag>{notes.length}</Tag>
+            <Tooltip title={last.content || ''}>
+              <Typography.Text type="secondary">{preview}</Typography.Text>
+            </Tooltip>
+          </Space>
+        )
+      },
+    },
+    ...(canManageProjectFiles
+      ? [
+          {
+            title: 'Action',
+            key: 'action',
+            width: 140,
+            render: (_: unknown, record: ProjectTask) => (
+              <Space size="small">
+                <Button type="link" size="small" icon={<EditOutlined />} onClick={() => openTaskOnTasksPage(record)}>
+                  Edit
+                </Button>
+                <Button type="link" size="small" danger icon={<DeleteOutlined />} onClick={() => handleRemoveTaskFromProject(record)}>
+                  Remove
+                </Button>
+              </Space>
+            ),
+          },
+        ]
+      : []),
   ]
   const taskStatusOptions = [
     { value: 'To do', label: 'To do' },
@@ -748,7 +1152,7 @@ export default function ProjectProfile() {
       key: 'members',
       label: (
         <span>
-          <TeamOutlined /> Project Members
+          <TeamOutlined /> Project Members ({effectiveMembers.length})
         </span>
       ),
       children: (
@@ -774,12 +1178,12 @@ export default function ProjectProfile() {
       key: 'notes',
       label: (
         <span>
-          <CommentOutlined /> Notes / Comments
+          <CommentOutlined /> Notes / Comments ({projectNotes.length})
         </span>
       ),
       children: (
         <>
-          <Card size="small" title="Add comment" style={{ marginBottom: 16 }}>
+          <Card size="small" title={`Add comment (${projectNotes.length} / ${MAX_PROJECT_NOTES} comments)`} style={{ marginBottom: 16 }}>
             <Space.Compact style={{ width: '100%' }} direction="vertical">
               <Input.TextArea
                 ref={commentTextareaRef}
@@ -787,17 +1191,23 @@ export default function ProjectProfile() {
                 placeholder="Write a comment..."
                 value={newComment}
                 onChange={(e) => setNewComment(e.target.value)}
+                disabled={projectNotes.length >= MAX_PROJECT_NOTES}
               />
-              <Button type="primary" onClick={() => { onAddComment(newComment); setNewComment('') }}>
+              <Button
+                type="primary"
+                onClick={() => onAddComment(newComment)}
+                disabled={!newComment.trim() || projectNotes.length >= MAX_PROJECT_NOTES}
+              >
                 Add comment
               </Button>
             </Space.Compact>
           </Card>
           <Table
-            dataSource={[...project.notes, ...localNotes]}
+            dataSource={[...projectNotes, ...localNotes]}
             columns={noteColumns}
             pagination={false}
             size="small"
+            rowKey="key"
           />
         </>
       ),
@@ -827,6 +1237,27 @@ export default function ProjectProfile() {
             locale={{ emptyText: 'No files yet.' }}
           />
         </>
+      ),
+    },
+    {
+      key: 'activity',
+      label: (
+        <span>
+          <HistoryOutlined /> Activity log ({activityLogSorted.length})
+        </span>
+      ),
+      children: (
+        <Card size="small" title="Recent activity">
+          <ActivityLogTimeline
+            items={activityLogSorted.map((a) => ({
+              key: a.key,
+              label: a.description || a.type,
+              sublabel: `${a.author ? `${a.author} · ` : ''}${formatDate(a.createdAt || '')}`,
+            }))}
+            description="Recent actions and events for this project."
+            emptyMessage="No activity yet."
+          />
+        </Card>
       ),
     },
   ]
@@ -904,6 +1335,30 @@ export default function ProjectProfile() {
             </Space>
           </Form.Item>
         </Form>
+        )}
+      </Modal>
+
+      <Modal
+        title="Edit comment"
+        open={editingNote !== null}
+        onCancel={() => { setEditingNote(null); setEditCommentContent('') }}
+        onOk={onSaveEditNote}
+        okText="Save"
+        cancelText="Cancel"
+        destroyOnClose
+      >
+        {editingNote && (
+          <div style={{ marginTop: 8 }}>
+            <div style={{ marginBottom: 8 }}>
+              <Typography.Text type="secondary">{editingNote.author} · {formatDate(editingNote.createdAt)}</Typography.Text>
+            </div>
+            <Input.TextArea
+              rows={4}
+              value={editCommentContent}
+              onChange={(e) => setEditCommentContent(e.target.value)}
+              placeholder="Comment content..."
+            />
+          </div>
         )}
       </Modal>
 

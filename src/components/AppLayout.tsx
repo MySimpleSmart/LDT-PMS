@@ -18,6 +18,7 @@ import {
   BookOutlined,
   ReadOutlined,
   DownOutlined,
+  SettingOutlined,
 } from '@ant-design/icons'
 
 import { useAuth } from '../context/AuthContext'
@@ -33,10 +34,7 @@ const routesForSuperAdmin: MenuProps['items'] = [
     key: 'project-sub',
     icon: <ProjectOutlined />,
     label: 'Project',
-    children: [
-      { key: '/projects', label: 'All Projects' },
-      { key: '/projects/categories', label: 'Categories & Tags' },
-    ],
+    children: [{ key: '/projects', label: 'All Projects' }],
   },
   { key: '/tasks', icon: <CheckSquareOutlined />, label: 'Tasks' },
   { key: '/members', icon: <TeamOutlined />, label: 'Members' },
@@ -77,12 +75,15 @@ export default function AppLayout() {
 
   const userMenuItems: MenuProps['items'] = [
     ...(hasProfile ? [{ key: 'profile', icon: <UserOutlined />, label: 'My profile' }] : []),
+    ...(isSuperAdmin ? [{ key: 'settings', icon: <SettingOutlined />, label: 'System settings' }] : []),
     { type: 'divider' as const },
     { key: 'logout', icon: <LogoutOutlined />, label: 'Log out', danger: true },
   ]
 
   const onUserMenuClick: MenuProps['onClick'] = ({ key }) => {
-    if (key === 'profile' && hasProfile) {
+    if (key === 'settings') {
+      confirmNavigation('/settings/system', () => navigate('/settings/system'))
+    } else if (key === 'profile' && hasProfile) {
       confirmNavigation(profilePath, () => navigate(profilePath))
     } else if (key === 'logout') {
       Modal.confirm({

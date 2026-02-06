@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { Card, Form, Input, Select, Button, Space, Typography, Tag, message, Row, Col } from 'antd'
 import { ArrowLeftOutlined } from '@ant-design/icons'
 import AvatarPicker from '../components/AvatarPicker'
-import { ADMIN_POSITION_OPTIONS } from '../data/admins'
+import { useProjectMeta } from '../context/ProjectMetaContext'
 import { useCurrentUser } from '../context/CurrentUserContext'
 import { ADMIN_ROLE } from '../constants/roles'
 
@@ -18,6 +18,8 @@ const departmentOptions = [
 export default function NewAdmin() {
   const navigate = useNavigate()
   const { isSuperAdmin } = useCurrentUser()
+  const { positions } = useProjectMeta()
+  const positionOptions = positions.map((v) => ({ value: v, label: v }))
   const [form] = Form.useForm()
 
   useEffect(() => {
@@ -105,7 +107,7 @@ export default function NewAdmin() {
               </Form.Item>
 
               <Form.Item name="position" label="Position">
-                <Select placeholder="Select position" allowClear showSearch optionFilterProp="label" options={ADMIN_POSITION_OPTIONS} />
+                <Select placeholder="Select position" allowClear showSearch optionFilterProp="label" options={positionOptions} />
               </Form.Item>
 
               <Form.Item name="accountStatus" label="Account status">
