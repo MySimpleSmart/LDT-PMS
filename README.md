@@ -101,6 +101,41 @@ import { PlusOutlined } from '@ant-design/icons'
 
 ---
 
+## Add Member (Cloud Functions)
+
+The "Add member" flow uses a Cloud Function that:
+
+1. Creates a Firebase Auth user with a temporary password
+2. Creates the member in Firestore with status **Inactive**
+3. Sends a password reset email so the member can set their own password
+
+### Setup
+
+1. **Link Firebase project**  
+   Ensure `.firebaserc` uses your Firebase project ID (same as `VITE_FIREBASE_PROJECT_ID`):
+   ```bash
+   firebase use your-project-id
+   ```
+
+2. **Deploy functions**  
+   ```bash
+   cd functions && npm install && npm run deploy
+   ```
+
+3. **Email configuration (optional)**  
+   To send the password reset email, set environment variables for your functions:
+   - **Gmail:** `GMAIL_USER` and `GMAIL_APP_PASSWORD` (use an [App Password](https://support.google.com/accounts/answer/185833))
+   - **Other SMTP:** `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_HOST`, `SMTP_PORT`
+
+   In Firebase Console: Project → Functions → select your function → Environment variables.
+
+   If SMTP is not configured, the member is still created; the password reset email will not be sent (check function logs for the link during development).
+
+4. **App URL (optional)**  
+   Set `VITE_APP_URL` to your production URL so the password reset link points to the correct site (default: `http://localhost:5173`).
+
+---
+
 ## Scripts
 
 | Command     | Description        |
@@ -108,3 +143,10 @@ import { PlusOutlined } from '@ant-design/icons'
 | `npm run dev`    | Start dev server   |
 | `npm run build`  | Production build   |
 | `npm run preview`| Preview production build |
+
+### Functions
+
+| Command (from `functions/`) | Description        |
+|-----------------------------|--------------------|
+| `npm run deploy`            | Deploy Cloud Functions |
+| `npm run serve`             | Run Functions emulator |

@@ -102,6 +102,18 @@ export async function markNotificationRead(memberId: string, notificationId: str
   await updateDoc(ref, { read: true })
 }
 
+/** Delete all notifications for a member (e.g. on first login). */
+export async function deleteAllNotificationsForMember(memberId: string): Promise<void> {
+  if (!memberId?.trim()) return
+  const colRef = notificationsRef(memberId)
+  const snap = await getDocs(colRef)
+  if (snap.empty) return
+  const db = getDb()
+  const batch = writeBatch(db)
+  snap.docs.forEach((d) => batch.delete(d.ref))
+  await batch.commit()
+}
+
 /** Mark all notifications as read for a member. */
 export async function markAllNotificationsRead(memberId: string): Promise<void> {
   if (!memberId?.trim()) return

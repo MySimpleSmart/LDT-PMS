@@ -106,7 +106,7 @@ function mapDocToProjectDetail(data: ProjectDoc, fallbackIndex?: number): Projec
   }
 }
 
-async function loadProjectsCache(force = false): Promise<void> {
+export async function loadProjectsCache(force = false): Promise<void> {
   if (!force && projectsCache) return
   if (!force && cachePromise) {
     await cachePromise

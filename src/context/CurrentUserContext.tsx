@@ -1,8 +1,9 @@
 import { createContext, useContext, useState, useCallback, useEffect, useMemo, type ReactNode } from 'react'
 import type { AdminDetail } from '../data/admins'
 import type { MemberDetail } from '../data/members'
-import { getMemberByEmail } from '../data/members'
+import { getMemberByEmail, updateMember } from '../data/members'
 import { getProjectsList, getRelatedProjectsForMember } from '../data/projects'
+import { deleteAllNotificationsForMember } from '../data/notifications'
 import { useAuth } from './AuthContext'
 
 const STORAGE_KEY = 'echo_pms_current_admin_id'
@@ -83,6 +84,13 @@ export function CurrentUserProvider({ children }: { children: ReactNode }) {
     }
     try {
       const result = await getMemberByEmail(currentUser.email)
+      if (result?.detail?.accountStatus === 'Inactive') {
+        await updateMember(result.detail.memberId, { accountStatus: 'Active' })
+        await deleteAllNotificationsForMember(result.detail.memberId)
+        const refreshed = await getMemberByEmail(currentUser.email)
+        setMemberProfile(refreshed)
+        return
+      }
       setMemberProfile(result)
     } catch (err) {
       // eslint-disable-next-line no-console
@@ -112,7 +120,9 @@ export function CurrentUserProvider({ children }: { children: ReactNode }) {
   const isAdmin = isSuperAdmin || memberProfile?.detail?.roleSystem === 'admin'
   const isProjectLead = useMemo(() => {
     if (!memberProfile?.detail) return isAuthenticated
-    return isSuperAdmin || (memberProfile.detail.memberId && getRelatedProjectsForMember(memberProfile.detail.memberId).length > 0)
+    if (isSuperAdmin) return true
+    const related = getRelatedProjectsForMember(memberProfile.detail.memberId)
+    return related.some((r) => r.role === 'Lead')
   }, [memberProfile, isSuperAdmin, isAuthenticated])
 
   const displayName = memberProfile?.detail

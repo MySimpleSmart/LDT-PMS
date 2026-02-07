@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { Card, Form, Input, Select, Button, Space, Typography, Tag, message, Row, Col, Modal, Spin } from 'antd'
 import { ArrowLeftOutlined, DeleteOutlined } from '@ant-design/icons'
-import { appendMemberActivity, deleteMember, getMemberById, updateMember, type MemberDetail } from '../data/members'
+import { appendMemberActivity, deleteMemberFromSystem, getMemberById, updateMember, type MemberDetail } from '../data/members'
 import { isValidAustralianPhone, AU_PHONE_PLACEHOLDER, AU_PHONE_VALIDATION_MESSAGE } from '../utils/phone'
 import AvatarPicker from '../components/AvatarPicker'
 import { useCurrentUser } from '../context/CurrentUserContext'
@@ -70,15 +70,15 @@ export default function EditMember() {
   const handleRemoveMember = () => {
     if (!id || !member) return
     Modal.confirm({
-      title: 'Remove member',
-      content: `Are you sure you want to remove ${member.firstName} ${member.lastName}? They will lose access to the system. This action cannot be undone.`,
+      title: 'Remove member from system',
+      content: `Are you sure you want to remove ${member.firstName} ${member.lastName}? They will lose access (Auth + profile + projects). They can be re-added as a new member. This cannot be undone.`,
       okText: 'Remove',
       okType: 'danger',
       cancelText: 'Cancel',
       onOk: async () => {
         try {
-          await deleteMember(id)
-          message.success('Member removed.')
+          await deleteMemberFromSystem(id)
+          message.success('Member removed from system.')
           navigate('/members')
         } catch (err) {
           message.error(err instanceof Error ? err.message : 'Failed to remove member.')

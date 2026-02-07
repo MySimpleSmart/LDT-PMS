@@ -198,6 +198,10 @@ export default function Projects() {
       message.warning(`Cannot move a project from "${project.status}" to "${newStatus}".`)
       return
     }
+    if (newStatus === 'Completed' && !isSuperAdmin && !isAdmin) {
+      message.warning('Only Super Admin or Admin can move a project to Completed.')
+      return
+    }
     // Only the project lead can set status to Pending completion; Super Admin/Admin see it and confirm from the project page.
     if (newStatus === 'Pending completion') {
       const detail = projectDetailsById[projectId]
@@ -259,6 +263,10 @@ export default function Projects() {
     }
     if (!canMoveProjectToStatus(project.status, targetStatus)) {
       message.warning(`Cannot move a project from "${project.status}" to "${targetStatus}".`)
+      return
+    }
+    if (targetStatus === 'Completed' && !isSuperAdmin && !isAdmin) {
+      message.warning('Only Super Admin or Admin can move a project to Completed.')
       return
     }
     // Only the project lead can set status to Pending completion; Super Admin/Admin see it and confirm from the project page.

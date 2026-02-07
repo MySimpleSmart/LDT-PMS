@@ -6,7 +6,7 @@ import AvatarPicker from '../components/AvatarPicker'
 import { useCurrentUser } from '../context/CurrentUserContext'
 import { useProjectMeta } from '../context/ProjectMetaContext'
 import { SYSTEM_ROLE } from '../constants/roles'
-import { createMember } from '../data/members'
+import { createMemberWithAuth } from '../data/members'
 import { isValidAustralianPhone, AU_PHONE_PLACEHOLDER, AU_PHONE_VALIDATION_MESSAGE } from '../utils/phone'
 
 export default function NewMember() {
@@ -25,7 +25,7 @@ export default function NewMember() {
   const onFinish = async (values: Record<string, unknown>) => {
     setSubmitting(true)
     try {
-      const memberId = await createMember({
+      const result = await createMemberWithAuth({
         firstName: String(values.firstName ?? ''),
         lastName: String(values.lastName ?? ''),
         email: String(values.email ?? ''),
@@ -33,12 +33,21 @@ export default function NewMember() {
         department: String(values.department ?? ''),
         jobType: values.jobType ? String(values.jobType) : undefined,
         position: values.position ? String(values.position) : undefined,
-        accountStatus: (values.accountStatus as 'Active' | 'Inactive') ?? 'Active',
+        accountStatus: 'Inactive',
         avatarUrl: values.profileImage ? String(values.profileImage) : null,
         role: 'member',
       })
-      message.success('Member added successfully.')
-      navigate(`/members/${memberId}`)
+      if (result.viaCloudFunction) {
+        message.success('Member added. A password reset email has been sent.')
+      } else {
+        const hint = result.fallbackError
+          ? `Cloud Function failed: ${result.fallbackError}. `
+          : ''
+        message.warning(
+          `${hint}Member added to Firestore only. Deploy the Cloud Function (functions/deploy) and redeploy to enable Auth + email.`
+        )
+      }
+      navigate(`/members/${result.memberId}`)
     } catch (err) {
       message.error(err instanceof Error ? err.message : 'Failed to add member.')
     } finally {
@@ -62,7 +71,7 @@ export default function NewMember() {
           form={form}
           layout="vertical"
           onFinish={onFinish}
-          initialValues={{ accountStatus: 'Active' }}
+          initialValues={{}}
         >
           <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>
             Member ID will be assigned automatically (e.g. LDA0001).
@@ -149,14 +158,9 @@ export default function NewMember() {
                 <Select placeholder="Select position" allowClear showSearch optionFilterProp="label" options={positionOptions} />
               </Form.Item>
 
-              <Form.Item name="accountStatus" label="Account status">
-                <Select
-                  options={[
-                    { value: 'Active', label: 'Active' },
-                    { value: 'Inactive', label: 'Inactive' },
-                  ]}
-                />
-              </Form.Item>
+              <Typography.Text type="secondary" style={{ display: 'block', marginTop: 8 }}>
+                New members start as Inactive until they set their password via the email link.
+              </Typography.Text>
             </Col>
           </Row>
 

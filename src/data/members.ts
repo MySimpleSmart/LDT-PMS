@@ -1,4 +1,4 @@
-import { getDb } from '../lib/firebase'
+import { getDb, getAuthInstance, getCreateMemberWithAuthUrl, getDeleteMemberFromSystemUrl } from '../lib/firebase'
 import { collection, getDocs, doc, getDoc, setDoc, updateDoc, deleteDoc, query, where } from 'firebase/firestore'
 import { getRelatedProjectsForMember, getMemberIdsWhoAreProjectLeads } from './projects'
 import { getRelatedTasksForMember } from './tasks'
@@ -240,7 +240,63 @@ export type CreateMemberInput = {
   role?: string
 }
 
-/** Create a new member in Firestore. Returns the new member document id. */
+export type CreateMemberResult = {
+  memberId: string
+  /** True if Cloud Function succeeded (Auth + email). False if fell back to Firestore only. */
+  viaCloudFunction: boolean
+  /** Error message when fallback was used (for debugging). */
+  fallbackError?: string
+}
+
+/**
+ * Create a new member. Tries Cloud Function first (Auth user + Firestore + password reset email).
+ * Falls back to Firestore-only createMember if the function fails (CORS, network, not deployed).
+ */
+export async function createMemberWithAuth(input: CreateMemberInput): Promise<CreateMemberResult> {
+  try {
+    const auth = getAuthInstance()
+    const user = auth.currentUser
+    if (!user) throw new Error('Must be logged in')
+    const token = await user.getIdToken()
+    const url = getCreateMemberWithAuthUrl()
+    const body = {
+      firstName: input.firstName?.trim() ?? '',
+      lastName: input.lastName?.trim() ?? '',
+      email: input.email?.trim() ?? '',
+      phone: input.phone?.trim(),
+      department: input.department?.trim() ?? '',
+      jobType: input.jobType?.trim(),
+      position: input.position?.trim(),
+      avatarUrl: input.avatarUrl?.trim() || undefined,
+    }
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(body),
+    })
+    const data = await res.json()
+    if (!res.ok) {
+      throw new Error(data?.error || `HTTP ${res.status}`)
+    }
+    return { memberId: data.memberId, viaCloudFunction: true }
+  } catch (err) {
+    const anyErr = err as { message?: string; code?: string; details?: unknown }
+    const fallbackError = anyErr?.message || (anyErr?.code ? `Code: ${anyErr.code}` : '') || String(err)
+    // eslint-disable-next-line no-console
+    console.warn('Cloud Function createMemberWithAuth failed, using Firestore fallback:', fallbackError, err)
+    const memberId = await createMember({
+      ...input,
+      accountStatus: 'Active',
+      role: input.role ?? 'member',
+    })
+    return { memberId, viaCloudFunction: false, fallbackError }
+  }
+}
+
+/** Create a new member in Firestore only (no Auth, no email). Use for manual/demo flows. */
 export async function createMember(input: CreateMemberInput): Promise<string> {
   const db = getDb()
   const memberId = await getNextMemberId()
@@ -310,12 +366,37 @@ export async function updateMember(memberId: string, input: UpdateMemberInput): 
   await updateDoc(ref, data as Record<string, unknown>)
 }
 
-/** Delete a member from Firestore. Does not remove them from projects. */
+/** Delete a member from Firestore. Does not remove them from projects or Auth. */
 export async function deleteMember(memberId: string): Promise<void> {
   if (!memberId?.trim()) return
   const db = getDb()
   const ref = doc(db, MEMBERS_COLLECTION, memberId.trim())
   await deleteDoc(ref)
+}
+
+/**
+ * Remove member from system completely: Firebase Auth, Firestore member doc,
+ * notifications, and project membership/assignments. Admin only. Uses Cloud Function.
+ */
+export async function deleteMemberFromSystem(memberId: string): Promise<void> {
+  if (!memberId?.trim()) throw new Error('memberId is required')
+  const auth = getAuthInstance()
+  const user = auth.currentUser
+  if (!user) throw new Error('Must be logged in')
+  const token = await user.getIdToken()
+  const url = getDeleteMemberFromSystemUrl()
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ memberId: memberId.trim() }),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    throw new Error(data?.error || `Failed to remove member (${res.status})`)
+  }
 }
 
 /** Append one activity entry to a member profile's activity log (capped to last 200). */

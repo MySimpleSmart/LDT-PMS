@@ -58,9 +58,9 @@ export default function AppLayout() {
   const location = useLocation()
   const { signOut: authSignOut } = useAuth()
   const { currentAdmin, currentAdminId, currentMember, profilePath, displayName, setCurrentAdminId, isLoggedIn, isSuperAdmin, isProjectLead, isAdmin } = useCurrentUser()
-  const canAccessDashboard = isSuperAdmin || isProjectLead || isAdmin
+  const canAccessDashboard = isLoggedIn && (isSuperAdmin || isAdmin || isProjectLead || Boolean(currentMember))
   const routes = (isSuperAdmin || isAdmin) ? routesForSuperAdmin : routesForProjectLead
-  const { notifications, unreadCount, markAsRead, markAllAsRead } = useNotifications()
+  const { notifications, unreadCount, markAsRead, markAllAsRead, clearHistory } = useNotifications()
   const { confirmNavigation } = useUnsavedChanges()
   const [notificationOpen, setNotificationOpen] = useState(false)
 
@@ -81,13 +81,20 @@ export default function AppLayout() {
 
   const notificationDropdown = (
     <div style={{ width: 360, maxHeight: 400, background: '#fff', borderRadius: 8, boxShadow: '0 6px 16px rgba(0,0,0,0.08)', overflow: 'hidden' }}>
-      <div style={{ padding: '12px 16px', borderBottom: '1px solid #f0f0f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <div style={{ padding: '12px 16px', borderBottom: '1px solid #f0f0f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
         <Typography.Text strong>Notifications</Typography.Text>
-        {unreadCount > 0 && (
-          <Button type="link" size="small" onClick={() => markAllAsRead()}>
-            Mark all read
-          </Button>
-        )}
+        <Space size="small">
+          {unreadCount > 0 && (
+            <Button type="link" size="small" onClick={() => markAllAsRead()}>
+              Mark all read
+            </Button>
+          )}
+          {notifications.length > 0 && (
+            <Button type="link" size="small" onClick={() => clearHistory()}>
+              Clear history
+            </Button>
+          )}
+        </Space>
       </div>
       <div style={{ maxHeight: 320, overflowY: 'auto' }}>
         {notifications.length === 0 ? (
@@ -160,7 +167,7 @@ export default function AppLayout() {
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 24, background: '#fafafa' }}>
           <Typography.Title level={3} style={{ marginBottom: 8 }}>No dashboard access</Typography.Title>
           <Typography.Text type="secondary" style={{ marginBottom: 24, textAlign: 'center', maxWidth: 400 }}>
-            Your account does not have access to the project lead dashboard. Only Super Admin and project leads can use this area. Contact Super Admin if you need access.
+            Your account could not be found in the system. Contact your administrator to be added as a member.
           </Typography.Text>
           <Button
             type="primary"

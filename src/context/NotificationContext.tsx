@@ -4,6 +4,7 @@ import {
   subscribeToNotifications as subscribeNotifications,
   markNotificationRead as markReadData,
   markAllNotificationsRead as markAllReadData,
+  deleteAllNotificationsForMember,
 } from '../data/notifications'
 import { useCurrentUser } from './CurrentUserContext'
 
@@ -12,6 +13,7 @@ interface NotificationContextValue {
   unreadCount: number
   markAsRead: (id: string) => Promise<void>
   markAllAsRead: () => Promise<void>
+  clearHistory: () => Promise<void>
 }
 
 const NotificationContext = createContext<NotificationContextValue | null>(null)
@@ -42,11 +44,18 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     setNotifications((prev) => prev.map((n) => ({ ...n, read: true })))
   }, [memberId])
 
+  const clearHistory = useCallback(async () => {
+    if (!memberId) return
+    await deleteAllNotificationsForMember(memberId)
+    setNotifications([])
+  }, [memberId])
+
   const value: NotificationContextValue = {
     notifications,
     unreadCount,
     markAsRead,
     markAllAsRead,
+    clearHistory,
   }
 
   return <NotificationContext.Provider value={value}>{children}</NotificationContext.Provider>

@@ -1,6 +1,7 @@
 import { initializeApp, type FirebaseApp } from 'firebase/app'
 import { getFirestore, type Firestore } from 'firebase/firestore'
 import { getAuth, type Auth } from 'firebase/auth'
+import { getFunctions, type Functions } from 'firebase/functions'
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -20,6 +21,7 @@ console.log('FIREBASE ENV', {
 let app: FirebaseApp | undefined
 let db: Firestore | undefined
 let auth: Auth | undefined
+let functions: Functions | undefined
 
 export function isFirebaseConfigured(): boolean {
   return Boolean(
@@ -37,6 +39,7 @@ export function initFirebase(): FirebaseApp {
   app = initializeApp(firebaseConfig)
   db = getFirestore(app)
   auth = getAuth(app)
+  functions = getFunctions(app, 'us-central1')
   return app
 }
 
@@ -48,4 +51,21 @@ export function getDb(): Firestore {
 export function getAuthInstance(): Auth {
   if (!auth) initFirebase()
   return auth!
+}
+
+export function getFunctionsInstance(): Functions {
+  if (!functions) initFirebase()
+  return functions!
+}
+
+/** URL for createMemberWithAuthHttp HTTP function. */
+export function getCreateMemberWithAuthUrl(): string {
+  const pid = firebaseConfig.projectId
+  return `https://us-central1-${pid}.cloudfunctions.net/createMemberWithAuthHttp`
+}
+
+/** URL for deleteMemberFromSystemHttp HTTP function. */
+export function getDeleteMemberFromSystemUrl(): string {
+  const pid = firebaseConfig.projectId
+  return `https://us-central1-${pid}.cloudfunctions.net/deleteMemberFromSystemHttp`
 }
