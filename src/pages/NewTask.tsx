@@ -25,12 +25,13 @@ export default function NewTask() {
   const navigate = useNavigate()
   const [form] = Form.useForm()
   const { addTask } = useTasks()
-  const { displayName, isSuperAdmin, currentAdminId, currentMember, currentUserMemberId } = useCurrentUser()
+  const { displayName, isSuperAdmin, isAdmin, currentAdminId, currentMember, currentUserMemberId } = useCurrentUser()
   const { dirty, setDirty, confirmNavigation } = useUnsavedChanges()
 
   const [projects, setProjects] = useState<ProjectListRow[]>([])
   const [projectDetailsById, setProjectDetailsById] = useState<Record<string, ProjectDetail>>({})
   const [leadProjectIds, setLeadProjectIds] = useState<string[]>([])
+  const [projectsLoaded, setProjectsLoaded] = useState(false)
 
   useEffect(() => {
     let active = true
@@ -58,10 +59,12 @@ export default function NewTask() {
         if (active) {
           setProjectDetailsById(details)
           setLeadProjectIds(leadIds)
+          setProjectsLoaded(true)
         }
       } catch (err) {
         // eslint-disable-next-line no-console
         console.error('Failed to load projects for NewTask page', err)
+        if (active) setProjectsLoaded(true)
       }
     })()
     return () => {
@@ -69,11 +72,11 @@ export default function NewTask() {
     }
   }, [currentUserMemberId])
 
-  const canAddTask = isSuperAdmin || (currentAdminId && !currentMember) || Boolean(currentUserMemberId && leadProjectIds.length)
+  const canAddTask = isSuperAdmin || isAdmin || (currentAdminId && !currentMember) || Boolean(currentUserMemberId && leadProjectIds.length > 0)
 
   useEffect(() => {
-    if (!canAddTask) navigate('/tasks', { replace: true })
-  }, [canAddTask, navigate])
+    if (projectsLoaded && !canAddTask) navigate('/tasks', { replace: true })
+  }, [projectsLoaded, canAddTask, navigate])
 
   useEffect(() => {
     setDirty(false)
@@ -90,7 +93,7 @@ export default function NewTask() {
     return () => window.removeEventListener('beforeunload', handler)
   }, [dirty])
 
-  const canAddToAnyProject = isSuperAdmin || (currentAdminId && !currentMember) || currentMember?.role === 'Admin'
+  const canAddToAnyProject = isSuperAdmin || isAdmin || (currentAdminId && !currentMember) || currentMember?.role === 'Admin'
   const projectOptions = (canAddToAnyProject
     ? projects
     : currentMember && currentUserMemberId && leadProjectIds.length

@@ -7,10 +7,11 @@ import { useCurrentUser } from '../context/CurrentUserContext'
 import { useProjectMeta } from '../context/ProjectMetaContext'
 import { SYSTEM_ROLE } from '../constants/roles'
 import { createMember } from '../data/members'
+import { isValidAustralianPhone, AU_PHONE_PLACEHOLDER, AU_PHONE_VALIDATION_MESSAGE } from '../utils/phone'
 
 export default function NewMember() {
   const navigate = useNavigate()
-  const { isSuperAdmin } = useCurrentUser()
+  const { isAdmin } = useCurrentUser()
   const { jobTypes, positions } = useProjectMeta()
   const jobTypeOptions = jobTypes.map((v) => ({ value: v, label: v }))
   const positionOptions = positions.map((v) => ({ value: v, label: v }))
@@ -18,8 +19,8 @@ export default function NewMember() {
   const [submitting, setSubmitting] = useState(false)
 
   useEffect(() => {
-    if (!isSuperAdmin) navigate('/members', { replace: true })
-  }, [isSuperAdmin, navigate])
+    if (!isAdmin) navigate('/members', { replace: true })
+  }, [isAdmin, navigate])
 
   const onFinish = async (values: Record<string, unknown>) => {
     setSubmitting(true)
@@ -100,8 +101,19 @@ export default function NewMember() {
                 <Input placeholder="jane.doe@company.com" type="email" />
               </Form.Item>
 
-              <Form.Item name="phone" label="Phone">
-                <Input placeholder="+1 234 567 8900" />
+              <Form.Item
+                name="phone"
+                label="Phone"
+                rules={[
+                  {
+                    validator: (_, value) =>
+                      !value || isValidAustralianPhone(value)
+                        ? Promise.resolve()
+                        : Promise.reject(new Error(AU_PHONE_VALIDATION_MESSAGE)),
+                  },
+                ]}
+              >
+                <Input placeholder={AU_PHONE_PLACEHOLDER} />
               </Form.Item>
             </Col>
             <Col xs={24} lg={12}>

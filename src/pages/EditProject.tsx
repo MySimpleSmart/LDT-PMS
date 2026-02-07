@@ -24,7 +24,7 @@ const statusOptions = [
 export default function EditProject() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
-  const { isSuperAdmin } = useCurrentUser()
+  const { isAdmin } = useCurrentUser()
   const [form] = Form.useForm()
   const [project, setProject] = useState<ProjectDetail | null>(null)
   const { categories, tags } = useProjectMeta()
@@ -33,8 +33,8 @@ export default function EditProject() {
   const tagOptions = tags.map((t) => ({ value: t, label: t }))
 
   useEffect(() => {
-    if (!isSuperAdmin) navigate('/projects', { replace: true })
-  }, [isSuperAdmin, navigate])
+    if (!isAdmin) navigate('/projects', { replace: true })
+  }, [isAdmin, navigate])
 
   useEffect(() => {
     let active = true

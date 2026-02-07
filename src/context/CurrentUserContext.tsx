@@ -16,6 +16,8 @@ type CurrentUserContextValue = {
   isLoggedIn: boolean
   /** True when member profile has role super_admin (from Firestore members). */
   isSuperAdmin: boolean
+  /** True when member profile has role super_admin or admin (can pin notes, etc.). */
+  isAdmin: boolean
   /** True when current user can use project lead dashboard (Super Admin or project lead). */
   isProjectLead: boolean
   /** Display name for header (from member profile or Firebase user). */
@@ -107,6 +109,7 @@ export function CurrentUserProvider({ children }: { children: ReactNode }) {
   const currentMemberId = memberProfile?.detail?.memberId ?? null
   const isLoggedIn = isAuthenticated
   const isSuperAdmin = memberProfile?.detail?.roleSystem === 'super_admin'
+  const isAdmin = isSuperAdmin || memberProfile?.detail?.roleSystem === 'admin'
   const isProjectLead = useMemo(() => {
     if (!memberProfile?.detail) return isAuthenticated
     return isSuperAdmin || (memberProfile.detail.memberId && getRelatedProjectsForMember(memberProfile.detail.memberId).length > 0)
@@ -128,6 +131,7 @@ export function CurrentUserProvider({ children }: { children: ReactNode }) {
     setCurrentAdminId,
     isLoggedIn,
     isSuperAdmin,
+    isAdmin,
     isProjectLead,
     displayName,
     profilePath,

@@ -39,8 +39,8 @@ function formatDate(iso: string | undefined | null): string {
 export default function Dashboard() {
   const navigate = useNavigate()
   const { notes } = useNotes()
-  const { isSuperAdmin, currentAdminId, currentMember, isProjectLead } = useCurrentUser()
-  const canAddTask = isSuperAdmin || (currentAdminId && !currentMember) || isProjectLead
+  const { isSuperAdmin, isAdmin, currentAdminId, currentMember, isProjectLead } = useCurrentUser()
+  const canAddTask = isSuperAdmin || isAdmin || (currentAdminId && !currentMember) || isProjectLead
 
   const [projects, setProjects] = useState<ProjectListRow[]>([])
   const [tasks, setTasks] = useState<Task[]>([])
@@ -78,9 +78,9 @@ export default function Dashboard() {
   )
 
   const quickActions = [
-    ...(isSuperAdmin ? [{ label: 'New project', icon: <ProjectOutlined />, path: '/projects/new' }] : []),
+    ...((isSuperAdmin || isAdmin) ? [{ label: 'New project', icon: <ProjectOutlined />, path: '/projects/new' }] : []),
     ...(canAddTask ? [{ label: 'New task', icon: <CheckSquareOutlined />, path: '/tasks/new' }] : []),
-    ...(isSuperAdmin ? [{ label: 'New member', icon: <UserAddOutlined />, path: '/members/new' }] : []),
+    ...((isSuperAdmin || isAdmin) ? [{ label: 'New member', icon: <UserAddOutlined />, path: '/members/new' }] : []),
     { label: 'New note', icon: <FileTextOutlined />, path: '/notes' },
   ]
 
@@ -93,9 +93,13 @@ export default function Dashboard() {
         Overview of your projects and activity.
       </Typography.Text>
 
-      <Row gutter={[16, 16]}>
+      <style>{`
+        .dashboard-stats-cards .ant-card { border: 1px solid #f0f0f0; box-shadow: none; transition: background-color 0.2s ease; }
+        .dashboard-stats-cards .ant-card:hover { background-color: #fafafa; }
+      `}</style>
+      <Row gutter={[16, 16]} className="dashboard-stats-cards">
         <Col xs={24} sm={12} lg={6}>
-          <Card size="small" hoverable onClick={() => navigate('/projects')} style={{ cursor: 'pointer' }}>
+          <Card size="small" hoverable={false} onClick={() => navigate('/projects')} style={{ cursor: 'pointer' }}>
             <Space>
               <div style={{ padding: 8, background: '#e6f4ff', borderRadius: 8 }}>
                 <ProjectOutlined style={{ fontSize: 20, color: '#1677ff' }} />
@@ -108,7 +112,7 @@ export default function Dashboard() {
           </Card>
         </Col>
         <Col xs={24} sm={12} lg={6}>
-          <Card size="small" hoverable onClick={() => navigate('/tasks')} style={{ cursor: 'pointer' }}>
+          <Card size="small" hoverable={false} onClick={() => navigate('/tasks')} style={{ cursor: 'pointer' }}>
             <Space>
               <div style={{ padding: 8, background: '#f6ffed', borderRadius: 8 }}>
                 <CheckSquareOutlined style={{ fontSize: 20, color: '#52c41a' }} />
@@ -121,7 +125,7 @@ export default function Dashboard() {
           </Card>
         </Col>
         <Col xs={24} sm={12} lg={6}>
-          <Card size="small" hoverable onClick={() => navigate('/members')} style={{ cursor: 'pointer' }}>
+          <Card size="small" hoverable={false} onClick={() => navigate('/members')} style={{ cursor: 'pointer' }}>
             <Space>
               <div style={{ padding: 8, background: '#fff7e6', borderRadius: 8 }}>
                 <TeamOutlined style={{ fontSize: 20, color: '#fa8c16' }} />
@@ -134,7 +138,7 @@ export default function Dashboard() {
           </Card>
         </Col>
         <Col xs={24} sm={12} lg={6}>
-          <Card size="small" hoverable onClick={() => navigate('/projects')} style={{ cursor: 'pointer' }}>
+          <Card size="small" hoverable={false} onClick={() => navigate('/projects')} style={{ cursor: 'pointer' }}>
             <Space>
               <div style={{ padding: 8, background: '#f9f0ff', borderRadius: 8 }}>
                 <RiseOutlined style={{ fontSize: 20, color: '#722ed1' }} />

@@ -4,6 +4,8 @@ import { Card, Form, Input, Select, Button, Space, Typography, Tag, message, Row
 import { ArrowLeftOutlined, DeleteOutlined } from '@ant-design/icons'
 import { getAdminById } from '../data/admins'
 import type { AdminDetail } from '../data/admins'
+import { updateMember } from '../data/members'
+import { isValidAustralianPhone, AU_PHONE_PLACEHOLDER, AU_PHONE_VALIDATION_MESSAGE } from '../utils/phone'
 import { useCurrentUser } from '../context/CurrentUserContext'
 import { ADMIN_ROLE } from '../constants/roles'
 import AvatarPicker from '../components/AvatarPicker'
@@ -24,6 +26,7 @@ export default function EditAdmin() {
   const [form] = Form.useForm()
   const [admin, setAdmin] = useState<AdminDetail | null>(null)
   const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
   const { positions } = useProjectMeta()
   const positionOptions = positions.map((v) => ({ value: v, label: v }))
 
@@ -47,16 +50,21 @@ export default function EditAdmin() {
   const canRemoveAdmin = isSuperAdmin && !isEditingSuperAdmin
 
   const handleRemoveAdmin = () => {
+    if (!id) return
     Modal.confirm({
       title: 'Remove admin',
-      content: `Are you sure you want to remove ${admin?.firstName} ${admin?.lastName}? They will lose admin access.`,
+      content: `Are you sure you want to remove ${admin?.firstName} ${admin?.lastName}? They will lose admin access and become a Member.`,
       okText: 'Remove',
       okType: 'danger',
       cancelText: 'Cancel',
-      onOk: () => {
-        // TODO: Remove from Firebase (deleteDoc from 'admins' collection)
-        message.success('Admin removed.')
-        navigate('/admins')
+      onOk: async () => {
+        try {
+          await updateMember(id, { role: 'member' })
+          message.success('Admin removed. They are now a Member.')
+          navigate('/admins')
+        } catch (err) {
+          message.error(err instanceof Error ? err.message : 'Failed to remove admin.')
+        }
       },
     })
   }
@@ -81,13 +89,31 @@ export default function EditAdmin() {
     }
   }, [admin, form])
 
-  const onFinish = (values: Record<string, unknown>) => {
-    const role = (isEditingSuperAdmin && isSuperAdmin) ? (values.role as string) : admin.role
-    const payload = { ...values, role }
-    // TODO: Update in Firebase (e.g. updateDoc in 'admins' collection)
-    console.log('Update admin:', id, payload)
-    message.success('Profile updated successfully.')
-    navigate(`/admins/${id}`)
+  const onFinish = async (values: Record<string, unknown>) => {
+    if (!id || !admin) return
+    const roleDisplay = (isEditingSuperAdmin && isSuperAdmin) ? (values.role as string) : admin.role
+    const roleFirestore = roleDisplay === 'Super Admin' ? 'super_admin' : 'admin'
+    const accountStatus = (values.accountStatus ?? form.getFieldValue('accountStatus') ?? admin.accountStatus) as 'Active' | 'Inactive'
+    setSaving(true)
+    try {
+      await updateMember(id, {
+        firstName: String(values.firstName ?? ''),
+        lastName: String(values.lastName ?? ''),
+        email: String(values.email ?? ''),
+        phone: values.phone ? String(values.phone) : undefined,
+        department: String(values.department ?? ''),
+        position: values.position ? String(values.position) : undefined,
+        accountStatus: accountStatus === 'Active' || accountStatus === 'Inactive' ? accountStatus : 'Active',
+        avatarUrl: values.profileImage ? String(values.profileImage) : null,
+        role: roleFirestore,
+      })
+      message.success('Profile updated successfully.')
+      navigate(`/admins/${id}`)
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : 'Failed to update profile.')
+    } finally {
+      setSaving(false)
+    }
   }
 
   if (loading) {
@@ -163,8 +189,19 @@ export default function EditAdmin() {
                 <Input placeholder="sam.admin@company.com" type="email" />
               </Form.Item>
 
-              <Form.Item name="phone" label="Phone">
-                <Input placeholder="+1 234 567 8900" />
+              <Form.Item
+                name="phone"
+                label="Phone"
+                rules={[
+                  {
+                    validator: (_, value) =>
+                      !value || isValidAustralianPhone(value)
+                        ? Promise.resolve()
+                        : Promise.reject(new Error(AU_PHONE_VALIDATION_MESSAGE)),
+                  },
+                ]}
+              >
+                <Input placeholder={AU_PHONE_PLACEHOLDER} />
               </Form.Item>
             </Col>
             <Col xs={24} lg={12}>
@@ -208,7 +245,7 @@ export default function EditAdmin() {
 
           <Form.Item>
             <Space wrap>
-              <Button type="primary" htmlType="submit">
+              <Button type="primary" htmlType="submit" loading={saving}>
                 Save changes
               </Button>
               <Button onClick={() => navigate(`/admins/${id}`)}>

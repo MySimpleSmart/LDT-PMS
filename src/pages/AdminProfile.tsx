@@ -18,9 +18,12 @@ import {
 import type { TabsProps } from 'antd'
 import { ArrowLeftOutlined, MailOutlined, PhoneOutlined, SettingOutlined, ProjectOutlined, CheckSquareOutlined, IdcardOutlined, EditOutlined, HistoryOutlined, LockOutlined } from '@ant-design/icons'
 
+import { updatePassword, updateEmail } from 'firebase/auth'
 import { getAdminById } from '../data/admins'
+import { formatAustralianPhone } from '../utils/phone'
 import type { AdminDetail } from '../data/admins'
 import { useCurrentUser } from '../context/CurrentUserContext'
+import { useAuth } from '../context/AuthContext'
 import { ADMIN_ROLE } from '../constants/roles'
 import MemberAvatar from '../components/MemberAvatar'
 import ActivityLogTimeline from '../components/ActivityLogTimeline'
@@ -33,6 +36,7 @@ export default function AdminProfile() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const { isSuperAdmin, currentAdminId, currentUserMemberId } = useCurrentUser()
+  const { currentUser } = useAuth()
   const [admin, setAdmin] = useState<AdminDetail | null>(null)
   const [loading, setLoading] = useState(true)
 
@@ -112,7 +116,9 @@ export default function AdminProfile() {
             <Card title="Basic & Contact Details" size="small" style={{ flex: 1, width: '100%' }}>
               <Descriptions column={1} size="small">
                 <Descriptions.Item label={<Space size={6}><MailOutlined />Email</Space>}>{admin.email}</Descriptions.Item>
-                <Descriptions.Item label={<Space size={6}><PhoneOutlined />Phone</Space>}>{admin.phone}</Descriptions.Item>
+                <Descriptions.Item label={<Space size={6}><PhoneOutlined />Phone</Space>}>
+                {admin.phone ? formatAustralianPhone(admin.phone) || admin.phone : '—'}
+              </Descriptions.Item>
               </Descriptions>
             </Card>
           </Col>
@@ -190,23 +196,44 @@ export default function AdminProfile() {
             ),
             children: (isSuperAdmin || isOwnProfile) ? (
               <>
-                <Card size="small" title={<Space><LockOutlined /> Change password</Space>} style={{ marginBottom: isSuperAdmin ? 16 : 0 }}>
+                <Card size="small" title={<Space><LockOutlined /> Change password</Space>} style={{ marginBottom: (isSuperAdmin || isOwnProfile) ? 16 : 0 }}>
                   <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>
-                    {isOwnProfile ? 'Update your password.' : `Update password for this admin (${fullName}). Connect your backend to apply changes.`}
+                    {isOwnProfile ? 'Update your password.' : `Update password for this admin (${fullName}). Requires server-side Admin SDK.`}
                   </Typography.Text>
                   <Form
                     form={adminPasswordForm}
                     layout="vertical"
-                    onFinish={(values: { newPassword: string; confirmPassword: string }) => {
+                    onFinish={async (values: { newPassword: string; confirmPassword: string }) => {
                       if (values.newPassword !== values.confirmPassword) {
                         message.error('New passwords do not match.')
                         return
                       }
-                      setAdminPasswordLoading(true)
-                      Promise.resolve().then(() => {
-                        message.success('Password change requested for this admin. Connect your backend to complete.')
-                        adminPasswordForm.resetFields()
-                      }).finally(() => setAdminPasswordLoading(false))
+                      if (isOwnProfile && !currentUser) {
+                        message.error('You must be signed in to change your password.')
+                        return
+                      }
+                      if (isOwnProfile && currentUser) {
+                        setAdminPasswordLoading(true)
+                        try {
+                          await updatePassword(currentUser, values.newPassword)
+                          message.success('Password updated successfully.')
+                          adminPasswordForm.resetFields()
+                        } catch (err: unknown) {
+                          const msg = err && typeof err === 'object' && 'code' in err
+                            ? (err as { code: string }).code === 'auth/requires-recent-login'
+                              ? 'Please sign out and sign in again, then try changing your password.'
+                              : err && typeof err === 'object' && 'message' in err
+                                ? String((err as { message: string }).message)
+                                : 'Failed to update password'
+                            : 'Failed to update password'
+                          message.error(msg)
+                        } finally {
+                          setAdminPasswordLoading(false)
+                        }
+                        return
+                      }
+                      message.info('Changing another admin\'s password requires server-side Admin SDK integration.')
+                      adminPasswordForm.resetFields()
                     }}
                     style={{ maxWidth: 400 }}
                   >
@@ -226,24 +253,45 @@ export default function AdminProfile() {
                     </Form.Item>
                   </Form>
                 </Card>
-                {isSuperAdmin && (
+                {(isSuperAdmin || isOwnProfile) && (
                 <Card size="small" title={<Space><MailOutlined /> Change email</Space>}>
                   <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>
-                    Update email address for this admin ({fullName}). Connect your backend to apply changes.
+                    {isOwnProfile ? 'Update your email address.' : `Update email for this admin (${fullName}). Requires server-side Admin SDK.`}
                   </Typography.Text>
                   <Form
                     form={adminEmailForm}
                     layout="vertical"
-                    onFinish={(values: { newEmail: string; confirmEmail: string }) => {
+                    onFinish={async (values: { newEmail: string; confirmEmail: string }) => {
                       if (values.newEmail !== values.confirmEmail) {
                         message.error('Email addresses do not match.')
                         return
                       }
-                      setAdminEmailLoading(true)
-                      Promise.resolve().then(() => {
-                        message.success('Email change requested for this admin. Connect your backend to complete.')
-                        adminEmailForm.resetFields()
-                      }).finally(() => setAdminEmailLoading(false))
+                      if (isOwnProfile && !currentUser) {
+                        message.error('You must be signed in to change your email.')
+                        return
+                      }
+                      if (isOwnProfile && currentUser) {
+                        setAdminEmailLoading(true)
+                        try {
+                          await updateEmail(currentUser, values.newEmail)
+                          message.success('Email updated successfully. Please verify the new address.')
+                          adminEmailForm.resetFields()
+                        } catch (err: unknown) {
+                          const msg = err && typeof err === 'object' && 'code' in err
+                            ? (err as { code: string }).code === 'auth/requires-recent-login'
+                              ? 'Please sign out and sign in again, then try changing your email.'
+                              : err && typeof err === 'object' && 'message' in err
+                                ? String((err as { message: string }).message)
+                                : 'Failed to update email'
+                            : 'Failed to update email'
+                          message.error(msg)
+                        } finally {
+                          setAdminEmailLoading(false)
+                        }
+                        return
+                      }
+                      message.info('Changing another admin\'s email requires server-side Admin SDK integration.')
+                      adminEmailForm.resetFields()
                     }}
                     style={{ maxWidth: 400 }}
                   >

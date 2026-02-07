@@ -1,8 +1,7 @@
 import { getDb } from '../lib/firebase'
-import { collection, getDocs, doc, getDoc, setDoc, updateDoc, query, where } from 'firebase/firestore'
+import { collection, getDocs, doc, getDoc, setDoc, updateDoc, deleteDoc, query, where } from 'firebase/firestore'
 import { getRelatedProjectsForMember, getMemberIdsWhoAreProjectLeads } from './projects'
 import { getRelatedTasksForMember } from './tasks'
-import { SYSTEM_ROLE } from '../constants/roles'
 import type { ProjectActivity } from '../types/project'
 
 export interface MemberDetail {
@@ -50,19 +49,37 @@ function memberIdFromDoc(docId: string, data: MemberDoc): string {
   return (data['member ID'] ?? docId).trim() || docId
 }
 
+/** Resolve role from Firestore doc (handles role, Role, and raw values). */
+function getRoleFromDoc(data: MemberDoc): { display: string; raw: string } {
+  const raw = (data.role ?? (data as Record<string, unknown>)['Role'] ?? 'member') as string
+  const lower = String(raw).trim().toLowerCase()
+  if (lower === 'super_admin') return { display: 'Super Admin', raw: 'super_admin' }
+  if (lower === 'admin') return { display: 'Admin', raw: 'admin' }
+  if (lower === 'member' || !lower) return { display: 'Member', raw: 'member' }
+  return { display: raw.charAt(0).toUpperCase() + raw.slice(1).toLowerCase(), raw }
+}
+
+/** Resolve account status from Firestore doc (handles status, Status, accountStatus). */
+function getAccountStatusFromDoc(data: MemberDoc): 'Active' | 'Inactive' {
+  const raw = (data.status ?? (data as Record<string, unknown>)['Status'] ?? (data as Record<string, unknown>)['accountStatus'] ?? 'active') as string
+  const lower = String(raw).trim().toLowerCase()
+  return lower === 'active' ? 'Active' : 'Inactive'
+}
+
 function mapDocToMemberDetail(docId: string, data: MemberDoc): MemberDetail {
   const memberId = memberIdFromDoc(docId, data)
+  const { display: role, raw: roleSystem } = getRoleFromDoc(data)
   return {
     memberId,
-    accountStatus: (data.status ?? 'active').toLowerCase() === 'active' ? 'Active' : 'Inactive',
+    accountStatus: getAccountStatusFromDoc(data),
     profileImage: data.avatarUrl?.trim() || null,
     firstName: data.firstName ?? '',
     lastName: data.lastName ?? '',
     email: data.email ?? '',
     phone: data.phone ?? '',
     department: data.department ?? '',
-    role: data.role === 'super_admin' ? 'Super Admin' : data.role === 'admin' ? 'Admin' : (data.role ?? SYSTEM_ROLE.MEMBER),
-    roleSystem: data.role,
+    role,
+    roleSystem,
     jobType: data.jobType,
     position: data.position ?? '',
     relatedProjects: getRelatedProjectsForMember(memberId),
@@ -132,14 +149,13 @@ export async function getMembersWithAdminRole(): Promise<MembersTableRow[]> {
   const rows: MembersTableRow[] = []
   snap.forEach((d) => {
     const data = d.data() as MemberDoc
-    const roleRaw = data.role
+    const { display: role, raw: roleRaw } = getRoleFromDoc(data)
     if (roleRaw !== 'super_admin' && roleRaw !== 'admin') return
     const memberId = memberIdFromDoc(d.id, data)
     const firstName = data.firstName ?? ''
     const lastName = data.lastName ?? ''
     const fullName = [firstName, lastName].filter(Boolean).join(' ').trim() || memberId
-    const status = (data.status ?? 'active').toLowerCase() === 'active' ? 'Active' : 'Inactive'
-    const role = roleRaw === 'super_admin' ? 'Super Admin' : 'Admin'
+    const status = getAccountStatusFromDoc(data)
     rows.push({
       id: d.id,
       memberId,
@@ -158,6 +174,12 @@ export async function getMembersWithAdminRole(): Promise<MembersTableRow[]> {
   return rows
 }
 
+/** Get member IDs of users with Super Admin or Admin role (for notifications). */
+export async function getAdminMemberIds(): Promise<string[]> {
+  const rows = await getMembersWithAdminRole()
+  return rows.map((r) => r.memberId).filter(Boolean)
+}
+
 /** List for Members table. */
 export async function getMembersTableList(): Promise<MembersTableRow[]> {
   const db = getDb()
@@ -170,8 +192,8 @@ export async function getMembersTableList(): Promise<MembersTableRow[]> {
     const firstName = data.firstName ?? ''
     const lastName = data.lastName ?? ''
     const fullName = [firstName, lastName].filter(Boolean).join(' ').trim() || memberId
-    const status = (data.status ?? 'active').toLowerCase() === 'active' ? 'Active' : 'Inactive'
-    const role = data.role === 'super_admin' ? 'Super Admin' : data.role === 'admin' ? 'Admin' : (data.role ?? SYSTEM_ROLE.MEMBER)
+    const status = getAccountStatusFromDoc(data)
+    const { display: role } = getRoleFromDoc(data)
     rows.push({
       id: d.id,
       memberId,
@@ -273,7 +295,10 @@ export async function updateMember(memberId: string, input: UpdateMemberInput): 
   if (input.department !== undefined) data.department = input.department
   if (input.jobType !== undefined) data.jobType = input.jobType
   if (input.position !== undefined) data.position = input.position
-  if (input.accountStatus !== undefined) data.status = input.accountStatus.toLowerCase() === 'active' ? 'active' : 'inactive'
+  if (input.accountStatus !== undefined) {
+    const statusVal = String(input.accountStatus).trim().toLowerCase() === 'active' ? 'active' : 'inactive'
+    data.status = statusVal
+  }
   if (input.avatarUrl !== undefined) data.avatarUrl = input.avatarUrl?.trim() ?? ''
   if (input.role !== undefined) data.role = input.role
   if (input.activityLog !== undefined) {
@@ -283,6 +308,14 @@ export async function updateMember(memberId: string, input: UpdateMemberInput): 
       : input.activityLog
   }
   await updateDoc(ref, data as Record<string, unknown>)
+}
+
+/** Delete a member from Firestore. Does not remove them from projects. */
+export async function deleteMember(memberId: string): Promise<void> {
+  if (!memberId?.trim()) return
+  const db = getDb()
+  const ref = doc(db, MEMBERS_COLLECTION, memberId.trim())
+  await deleteDoc(ref)
 }
 
 /** Append one activity entry to a member profile's activity log (capped to last 200). */

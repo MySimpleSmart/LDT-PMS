@@ -1,6 +1,7 @@
 import type { Task, TaskAssignee, TaskNote } from '../types/task'
 import type { ProjectTask } from '../types/project'
 import { getProjectsList, getProjectsCache, getProjectById, updateProjectById } from './projects'
+import { createNotification } from './notifications'
 
 /** Normalize project task to assignees array (supports legacy single assignee). */
 export function getTaskAssignees(t: ProjectTask | Task): TaskAssignee[] {
@@ -101,6 +102,18 @@ export async function persistAddTask(projectDocId: string, payload: AddTaskToPro
   if (payload.completedAt != null && payload.completedAt !== '') newProjectTask.completedAt = payload.completedAt
   const sanitizedTasks = [...project.tasks.map((t) => stripUndefined(t as Record<string, unknown>)), newProjectTask]
   await updateProjectById(projectDocId, { tasks: sanitizedTasks })
+  const assignees = (payload.assignees ?? []) as { memberId: string; name: string }[]
+  const taskTitle = newProjectTask.title as string
+  const link = `/projects/${projectDocId}`
+  for (const a of assignees) {
+    if (a.memberId) {
+      createNotification(a.memberId, {
+        type: 'task_assigned',
+        title: `You were assigned to task: ${taskTitle}`,
+        link,
+      }).catch(() => {})
+    }
+  }
   return {
     id: `${projectDocId}-${taskKey}`,
     projectId: project.projectId,
@@ -133,6 +146,10 @@ export async function persistUpdateTask(taskId: string, updates: UpdateTaskPaylo
   const projectDocId = parts[0]
   const project = await getProjectById(projectDocId)
   if (!project) throw new Error('Project not found')
+  const existingTask = project.tasks.find((t) => t.key === taskKey)
+  const oldAssignees = getTaskAssignees(existingTask ?? ({} as ProjectTask))
+  const oldIds = new Set(oldAssignees.map((a) => a.memberId))
+
   const updatedTasks = project.tasks.map((t) => {
     if (t.key !== taskKey) return stripUndefined(t as Record<string, unknown>)
     const merged: Record<string, unknown> = {
@@ -147,6 +164,20 @@ export async function persistUpdateTask(taskId: string, updates: UpdateTaskPaylo
     return stripUndefined(merged)
   })
   await updateProjectById(projectDocId, { tasks: updatedTasks })
+
+  if (updates.assignees) {
+    const taskTitle = (updates.taskName ?? existingTask?.title ?? 'Task') as string
+    const link = `/projects/${projectDocId}`
+    for (const a of updates.assignees) {
+      if (a.memberId && !oldIds.has(a.memberId)) {
+        createNotification(a.memberId, {
+          type: 'task_assigned',
+          title: `You were assigned to task: ${taskTitle}`,
+          link,
+        }).catch(() => {})
+      }
+    }
+  }
 }
 
 /** Remove a task from the project document in Firestore. taskId must be "projectDocId-taskKey". */

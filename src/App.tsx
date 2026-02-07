@@ -6,6 +6,7 @@ import { ProjectMetaProvider } from './context/ProjectMetaContext'
 import { TasksProvider } from './context/TasksContext'
 import { UnsavedChangesProvider } from './context/UnsavedChangesContext'
 import { NotesProvider } from './context/NotesContext'
+import { NotificationProvider } from './context/NotificationContext'
 import AppLayout from './components/AppLayout'
 import ProtectedRoute from './components/ProtectedRoute'
 import Login from './pages/Login'
@@ -50,6 +51,7 @@ function App() {
         <AuthProvider>
         <NotesProvider>
         <CurrentUserProvider>
+        <NotificationProvider>
         <ProjectMetaProvider>
         <TasksProvider>
         <UnsavedChangesProvider>
@@ -70,7 +72,7 @@ function App() {
             <Route path="members/:id/edit" element={<EditMember />} />
             <Route path="members/:id" element={<MemberProfile />} />
             <Route path="admins" element={<Admins />} />
-            <Route path="admins/new" element={<NewAdmin />} />
+            <Route path="admins/new" element={<Navigate to="/admins" replace />} />
             <Route path="admins/:id/edit" element={<EditAdmin />} />
             <Route path="admins/:id" element={<AdminProfile />} />
             <Route path="notes" element={<Notes />} />
@@ -84,6 +86,7 @@ function App() {
         </UnsavedChangesProvider>
         </TasksProvider>
         </ProjectMetaProvider>
+        </NotificationProvider>
         </CurrentUserProvider>
         </NotesProvider>
         </AuthProvider>

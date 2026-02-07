@@ -5,6 +5,8 @@ import { EyeOutlined, PlusOutlined, SearchOutlined, UnorderedListOutlined, Appst
 import type { Dayjs } from 'dayjs'
 import dayjs from 'dayjs'
 import { getProjectById, getProjectsList, getRelatedProjectsForMember, isProjectOverdue, updateProjectById, type ProjectListRow, type ProjectDetail } from '../data/projects'
+import { createNotificationsForMembers } from '../data/notifications'
+import { getAdminMemberIds } from '../data/members'
 import { useCurrentUser } from '../context/CurrentUserContext'
 
 const priorityColors: Record<string, string> = {
@@ -52,8 +54,14 @@ function formatShortDate(dateStr: string | undefined): string {
 }
 
 const sortOptions = [
-  { value: 'startDate', label: 'Start date (newest first)' },
-  { value: 'priority', label: 'Priority (high first)' },
+  { value: 'startDateDesc', label: 'Start date (newest first)' },
+  { value: 'startDateAsc', label: 'Start date (oldest first)' },
+  { value: 'endDateAsc', label: 'End date (nearest first)' },
+  { value: 'endDateDesc', label: 'End date (farthest first)' },
+  { value: 'projectNameAsc', label: 'Project name (A–Z)' },
+  { value: 'projectNameDesc', label: 'Project name (Z–A)' },
+  { value: 'priorityDesc', label: 'Priority (high first)' },
+  { value: 'priorityAsc', label: 'Priority (low first)' },
 ]
 
 const statusOptions = [
@@ -103,7 +111,7 @@ type ProjectRow = ProjectListRow
 
 export default function Projects() {
   const navigate = useNavigate()
-  const { isSuperAdmin, currentUserMemberId } = useCurrentUser()
+  const { isSuperAdmin, isAdmin, currentUserMemberId } = useCurrentUser()
   const [allProjects, setAllProjects] = useState<ProjectRow[]>([])
   const [projectDetailsById, setProjectDetailsById] = useState<Record<string, ProjectDetail>>({})
 
@@ -140,7 +148,7 @@ export default function Projects() {
   const [searchText, setSearchText] = useState('')
   const [statusFilter, setStatusFilter] = useState<string | null>(null)
   const [dateRange, setDateRange] = useState<[Dayjs | null, Dayjs | null] | null>(null)
-  const [sortBy, setSortBy] = useState<'startDate' | 'priority'>('startDate')
+  const [sortBy, setSortBy] = useState<string>('startDateDesc')
   const [viewMode, setViewMode] = useState<'list' | 'grid'>('list')
   const [currentPage, setCurrentPage] = useState(1)
   const [pageSize, setPageSize] = useState(10)
@@ -214,6 +222,14 @@ export default function Projects() {
         if (!inNew.includes(projectId)) next[newStatus] = [...inNew, projectId]
         return next
       })
+      if (newStatus === 'Pending completion') {
+        const adminIds = await getAdminMemberIds()
+        createNotificationsForMembers(adminIds, {
+          type: 'project_pending_approval',
+          title: `Project "${project.projectName}" is pending approval.`,
+          link: `/projects/${projectId}`,
+        }).catch(() => {})
+      }
       message.success(`Project status set to ${newStatus}.`)
     } catch (err) {
       message.error(err instanceof Error ? err.message : 'Failed to update project status.')
@@ -270,6 +286,14 @@ export default function Projects() {
         next[targetStatus] = [...toList.slice(0, insertAt), projectId, ...toList.slice(insertAt)]
         return next
       })
+      if (targetStatus === 'Pending completion') {
+        const adminIds = await getAdminMemberIds()
+        createNotificationsForMembers(adminIds, {
+          type: 'project_pending_approval',
+          title: `Project "${project.projectName}" is pending approval.`,
+          link: `/projects/${projectId}`,
+        }).catch(() => {})
+      }
       message.success(`Project status set to ${targetStatus}.`)
     } catch (err) {
       message.error(err instanceof Error ? err.message : 'Failed to update project status.')
@@ -334,14 +358,43 @@ export default function Projects() {
       })
     }
     return [...list].sort((a, b) => {
-      if (sortBy === 'priority') {
-        const rankA = priorityRank(a.priority)
-        const rankB = priorityRank(b.priority)
-        return rankB - rankA
+      switch (sortBy) {
+        case 'startDateAsc': {
+          const dateA = a.startDate ? dayjs(a.startDate).valueOf() : 0
+          const dateB = b.startDate ? dayjs(b.startDate).valueOf() : 0
+          return dateA - dateB
+        }
+        case 'endDateAsc': {
+          const dateA = a.endDate ? dayjs(a.endDate).valueOf() : 0
+          const dateB = b.endDate ? dayjs(b.endDate).valueOf() : 0
+          return dateA - dateB
+        }
+        case 'endDateDesc': {
+          const dateA = a.endDate ? dayjs(a.endDate).valueOf() : 0
+          const dateB = b.endDate ? dayjs(b.endDate).valueOf() : 0
+          return dateB - dateA
+        }
+        case 'projectNameAsc':
+          return (a.projectName || '').localeCompare(b.projectName || '', undefined, { sensitivity: 'base' })
+        case 'projectNameDesc':
+          return (b.projectName || '').localeCompare(a.projectName || '', undefined, { sensitivity: 'base' })
+        case 'priorityDesc': {
+          const rankA = priorityRank(a.priority)
+          const rankB = priorityRank(b.priority)
+          return rankB - rankA
+        }
+        case 'priorityAsc': {
+          const rankA = priorityRank(a.priority)
+          const rankB = priorityRank(b.priority)
+          return rankA - rankB
+        }
+        case 'startDateDesc':
+        default: {
+          const dateA = a.startDate ? dayjs(a.startDate).valueOf() : 0
+          const dateB = b.startDate ? dayjs(b.startDate).valueOf() : 0
+          return dateB - dateA
+        }
       }
-      const dateA = a.startDate ? dayjs(a.startDate).valueOf() : 0
-      const dateB = b.startDate ? dayjs(b.startDate).valueOf() : 0
-      return dateB - dateA
     })
   }, [baseProjects, searchText, statusFilter, dateRange, sortBy])
 
@@ -363,7 +416,7 @@ export default function Projects() {
   useEffect(() => {
     setCurrentPage(1)
     setKanbanVisibleCount({})
-  }, [filteredProjects.length])
+  }, [filteredProjects.length, activeTab])
 
   const totalOverdueTasksInList = useMemo(
     () => filteredProjects.reduce((sum, r) => sum + countOverdueTasks(projectDetailsById[r.id]?.tasks), 0),
@@ -497,6 +550,10 @@ export default function Projects() {
 
   return (
     <div style={{ width: '100%' }}>
+      <style>{`
+        .project-kanban-column .ant-card { border: 1px solid #f0f0f0; box-shadow: none; transition: background-color 0.2s ease; }
+        .project-kanban-column .ant-card:hover { background-color: #fafafa; }
+      `}</style>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
         <div>
           <Typography.Title level={3} style={{ marginBottom: 8 }}>Projects</Typography.Title>
@@ -506,7 +563,7 @@ export default function Projects() {
               : 'Manage your projects here. All Projects or My Projects (where you are involved).'}
           </Typography.Text>
         </div>
-        {isSuperAdmin && (
+        {(isSuperAdmin || isAdmin) && (
           <Button type="primary" icon={<PlusOutlined />} onClick={() => navigate('/projects/new')}>
             Add project
           </Button>
@@ -555,7 +612,7 @@ export default function Projects() {
                         placeholder="Sort by"
                         style={{ width: 200 }}
                         value={sortBy}
-                        onChange={(v) => setSortBy(v as 'startDate' | 'priority')}
+                        onChange={(v) => setSortBy(v ?? 'startDateDesc')}
                         options={sortOptions}
                       />
                       {(searchText || statusFilter || (dateRange && (dateRange[0] || dateRange[1]))) && (
@@ -569,7 +626,7 @@ export default function Projects() {
                           Clear filters
                         </Button>
                       )}
-                      {isSuperAdmin && (
+                      {(isSuperAdmin || isAdmin) && (
                         <Checkbox checked={showArchived} onChange={(e) => setShowArchived(e.target.checked)}>
                           Show archived
                         </Checkbox>
@@ -597,7 +654,7 @@ export default function Projects() {
                       pageSize,
                       total: filteredProjects.length,
                       showSizeChanger: true,
-                      pageSizeOptions: ['10', '20', '50'],
+                      pageSizeOptions: [10, 20, 50],
                       showTotal: (total) => `Total ${total} items`,
                       onChange: (page, size) => {
                         setCurrentPage(page)
@@ -616,6 +673,7 @@ export default function Projects() {
                       return (
                         <div
                           key={col.status}
+                          className="project-kanban-column"
                           onDragOver={(e) => handleProjectDragOver(e, col.status)}
                           onDragLeave={handleProjectDragLeave}
                           onDrop={(e) => handleProjectDrop(e, col.status)}
@@ -645,7 +703,6 @@ export default function Projects() {
                                 <Card
                                   key={p.id}
                                   size="small"
-                                  hoverable
                                   draggable
                                   onDragStart={(e) => handleProjectDragStart(e, p.id, col.status)}
                                   onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = 'move' }}
@@ -766,7 +823,7 @@ export default function Projects() {
                         placeholder="Sort by"
                         style={{ width: 200 }}
                         value={sortBy}
-                        onChange={(v) => setSortBy(v as 'startDate' | 'priority')}
+                        onChange={(v) => setSortBy(v ?? 'startDateDesc')}
                         options={sortOptions}
                       />
                       {(searchText || statusFilter || (dateRange && (dateRange[0] || dateRange[1]))) && (
@@ -780,7 +837,7 @@ export default function Projects() {
                           Clear filters
                         </Button>
                       )}
-                      {isSuperAdmin && (
+                      {(isSuperAdmin || isAdmin) && (
                         <Checkbox checked={showArchived} onChange={(e) => setShowArchived(e.target.checked)}>
                           Show archived
                         </Checkbox>
@@ -808,7 +865,7 @@ export default function Projects() {
                       pageSize,
                       total: filteredProjects.length,
                       showSizeChanger: true,
-                      pageSizeOptions: ['10', '20', '50'],
+                      pageSizeOptions: [10, 20, 50],
                       showTotal: (total) => `Total ${total} items`,
                       onChange: (page, size) => {
                         setCurrentPage(page)
@@ -828,6 +885,7 @@ export default function Projects() {
                       return (
                         <div
                           key={col.status}
+                          className="project-kanban-column"
                           onDragOver={(e) => handleProjectDragOver(e, col.status)}
                           onDragLeave={handleProjectDragLeave}
                           onDrop={(e) => handleProjectDrop(e, col.status)}
@@ -857,7 +915,6 @@ export default function Projects() {
                                 <Card
                                   key={p.id}
                                   size="small"
-                                  hoverable
                                   draggable
                                   onDragStart={(e) => handleProjectDragStart(e, p.id, col.status)}
                                   onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = 'move' }}

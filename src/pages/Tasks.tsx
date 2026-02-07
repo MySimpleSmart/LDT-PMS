@@ -38,10 +38,20 @@ const taskStatusOptionsForForm = [
   { value: 'In progress', label: 'In progress' },
 ]
 
-// Status options for filtering in the Tasks list
+// Status options for filtering in the Tasks list (Overdue = not completed + end date in the past)
 const taskStatusFilterOptions = [
+  { value: 'Overdue', label: 'Overdue' },
   ...taskStatusOptionsForForm,
   { value: 'Completed', label: 'Completed' },
+]
+
+const taskSortOptions = [
+  { value: 'startDateDesc', label: 'Start date (newest first)' },
+  { value: 'startDateAsc', label: 'Start date (oldest first)' },
+  { value: 'endDateAsc', label: 'End date (nearest first)' },
+  { value: 'endDateDesc', label: 'End date (farthest first)' },
+  { value: 'taskNameAsc', label: 'Task name (A–Z)' },
+  { value: 'taskNameDesc', label: 'Task name (Z–A)' },
 ]
 
 const TASK_KANBAN_STATUSES = ['To do', 'In progress', 'Completed']
@@ -122,10 +132,10 @@ export default function Tasks() {
   const navigate = useNavigate()
   const location = useLocation()
   const { tasks, getTaskById, updateTask, removeTask, addTaskNote } = useTasks()
-  const { currentAdminId, currentMember, isSuperAdmin, currentUserMemberId, displayName, isProjectLead } = useCurrentUser()
+  const { currentAdminId, currentMember, isSuperAdmin, isAdmin, currentUserMemberId, displayName, isProjectLead } = useCurrentUser()
   const [projects, setProjects] = useState<ProjectListRow[]>([])
   const [projectDetailsById, setProjectDetailsById] = useState<Record<string, ProjectDetail>>({})
-  const showAddTask = isSuperAdmin || (currentAdminId && !currentMember) || isProjectLead
+  const showAddTask = isSuperAdmin || isAdmin || (currentAdminId && !currentMember) || isProjectLead
 
   useEffect(() => {
     let active = true
@@ -168,7 +178,7 @@ export default function Tasks() {
   /** Project Lead may only edit/complete tasks in projects they lead (and that project’s member tasks). Not other projects. Super Admin/Admin may edit any task. */
   const canEditTask = useCallback(
     (t: Task) => {
-      if (isSuperAdmin) return true
+      if (isSuperAdmin || isAdmin) return true
       if (currentAdminId && !currentMember) return true
       if (!currentUserMemberId) return false
       const projectRow = projects.find((p) => p.projectId === t.projectId)
@@ -176,13 +186,26 @@ export default function Tasks() {
       const projectLeadMemberId = detail?.members.find((m) => m.role === 'Lead')?.memberId
       return projectLeadMemberId === currentUserMemberId
     },
-    [isSuperAdmin, currentAdminId, currentMember, currentUserMemberId, projects]
+    [isSuperAdmin, isAdmin, currentAdminId, currentMember, currentUserMemberId, projects, projectDetailsById]
+  )
+
+  /** Member (no edit rights) can mark complete only when the task is assigned solely to them. */
+  const canMarkCompleteAsMember = useCallback(
+    (t: Task) => {
+      if (canEditTask(t)) return false
+      if (!currentUserMemberId) return false
+      const assignees = getTaskAssignees(t)
+      const soleAssignee = assignees.length === 1 ? assignees[0] : null
+      return Boolean(soleAssignee && soleAssignee.memberId?.toUpperCase() === currentUserMemberId.toUpperCase())
+    },
+    [canEditTask, currentUserMemberId]
   )
 
   const [activeTab, setActiveTab] = useState<string>('all')
   const [searchText, setSearchText] = useState('')
   const [statusFilter, setStatusFilter] = useState<string | null>(null)
   const [dateRange, setDateRange] = useState<[Dayjs | null, Dayjs | null] | null>(null)
+  const [sortBy, setSortBy] = useState<string>('startDateDesc')
   const [viewMode, setViewMode] = useState<'list' | 'grid'>('list')
   const [currentPage, setCurrentPage] = useState(1)
   const [pageSize, setPageSize] = useState(10)
@@ -286,7 +309,10 @@ export default function Tasks() {
   }
 
   const closeEditDrawer = () => {
-    const isDirty = isFormDirty() || Boolean(noteInput.trim())
+    const assignees = task ? getTaskAssignees(task) : []
+    const soleAssigneeToMe = currentUserMemberId && assignees.length === 1 && assignees[0].memberId?.toUpperCase() === currentUserMemberId.toUpperCase()
+    const showEditForm = task && canEditTask(task) && !soleAssigneeToMe
+    const isDirty = (showEditForm && isFormDirty()) || Boolean(noteInput.trim())
     if (!isDirty) {
       setEditDrawerOpen(false)
       setSelectedTaskId(null)
@@ -380,6 +406,15 @@ export default function Tasks() {
 
   const onAddNote = async () => {
     if (!task || !noteInput.trim()) return
+    if (task.status === 'Completed') {
+      const assignees = getTaskAssignees(task)
+      const soleAssigneeToMe = currentUserMemberId && assignees.length === 1 && assignees[0].memberId?.toUpperCase() === currentUserMemberId.toUpperCase()
+      const canAddNoteToCompleted = isSuperAdmin || isAdmin || (canEditTask(task) && !soleAssigneeToMe)
+      if (!canAddNoteToCompleted) {
+        message.error('You cannot add comments to completed tasks.')
+        return
+      }
+    }
     setNoteSubmitting(true)
     try {
       const author = displayName || 'Current user'
@@ -412,7 +447,16 @@ export default function Tasks() {
       )
     }
     if (statusFilter) {
-      list = list.filter((t) => t.status === statusFilter)
+      if (statusFilter === 'Overdue') {
+        const today = dayjs().startOf('day')
+        list = list.filter((t) => {
+          if (t.status === 'Completed') return false
+          if (!t.endDate?.trim()) return false
+          return dayjs(t.endDate).startOf('day').isBefore(today)
+        })
+      } else {
+        list = list.filter((t) => t.status === statusFilter)
+      }
     }
     if (dateRange && (dateRange[0] || dateRange[1])) {
       const [rangeStart, rangeEnd] = dateRange
@@ -426,11 +470,35 @@ export default function Tasks() {
       })
     }
     return [...list].sort((a, b) => {
-      const dateA = a.startDate ? dayjs(a.startDate).valueOf() : 0
-      const dateB = b.startDate ? dayjs(b.startDate).valueOf() : 0
-      return dateB - dateA
+      switch (sortBy) {
+        case 'startDateAsc': {
+          const dateA = a.startDate ? dayjs(a.startDate).valueOf() : 0
+          const dateB = b.startDate ? dayjs(b.startDate).valueOf() : 0
+          return dateA - dateB
+        }
+        case 'endDateAsc': {
+          const dateA = a.endDate ? dayjs(a.endDate).valueOf() : 0
+          const dateB = b.endDate ? dayjs(b.endDate).valueOf() : 0
+          return dateA - dateB
+        }
+        case 'endDateDesc': {
+          const dateA = a.endDate ? dayjs(a.endDate).valueOf() : 0
+          const dateB = b.endDate ? dayjs(b.endDate).valueOf() : 0
+          return dateB - dateA
+        }
+        case 'taskNameAsc':
+          return (a.taskName || '').localeCompare(b.taskName || '', undefined, { sensitivity: 'base' })
+        case 'taskNameDesc':
+          return (b.taskName || '').localeCompare(a.taskName || '', undefined, { sensitivity: 'base' })
+        case 'startDateDesc':
+        default: {
+          const dateA = a.startDate ? dayjs(a.startDate).valueOf() : 0
+          const dateB = b.startDate ? dayjs(b.startDate).valueOf() : 0
+          return dateB - dateA
+        }
+      }
     })
-  }, [baseTasks, searchText, statusFilter, dateRange])
+  }, [baseTasks, searchText, statusFilter, dateRange, sortBy])
 
   const taskKanbanColumns = useMemo(() => {
     const grouped: Record<string, Task[]> = {}
@@ -460,8 +528,9 @@ export default function Tasks() {
   const handleMarkComplete = useCallback(
     (r: Task) => {
       if (r.status === 'Completed') return
-      if (!canEditTask(r)) {
-        message.error('Only the project lead for this project can mark tasks as completed.')
+      const canComplete = canEditTask(r) || canMarkCompleteAsMember(r)
+      if (!canComplete) {
+        message.error('You cannot mark this task as completed. Only the project lead or the sole assignee can.')
         return
       }
       Modal.confirm({
@@ -479,7 +548,7 @@ export default function Tasks() {
         },
       })
     },
-    [canEditTask, updateTask]
+    [canEditTask, canMarkCompleteAsMember, updateTask]
   )
 
   const handleRedo = useCallback(
@@ -528,11 +597,13 @@ export default function Tasks() {
       if (!taskId) return
       const task = tasks.find((t) => t.id === taskId)
       if (!task || task.status === newStatus) return
-      if (!canEditTask(task)) {
+      const fromStatus = task.status === 'Pending completion' ? 'In progress' : task.status
+      const movingToCompleted = newStatus === 'Completed' && fromStatus !== 'Completed'
+      const canChange = canEditTask(task) || (movingToCompleted && canMarkCompleteAsMember(task))
+      if (!canChange) {
         message.error('You cannot change this task’s status.')
         return
       }
-      const fromStatus = task.status === 'Pending completion' ? 'In progress' : task.status
       if (!canMoveTaskToStatus(fromStatus, newStatus)) {
         message.warning(`Cannot move a task from "${fromStatus}" to "${newStatus}".`)
         return
@@ -556,7 +627,7 @@ export default function Tasks() {
         message.error(err instanceof Error ? err.message : 'Failed to update task status.')
       }
     },
-    [tasks, canEditTask, updateTask]
+    [tasks, canEditTask, canMarkCompleteAsMember, updateTask]
   )
 
   const handleTaskDropOnCard = useCallback(
@@ -568,10 +639,15 @@ export default function Tasks() {
       const sourceStatus = e.dataTransfer.getData('application/x-echo-task-status')
       if (!taskId || taskId === targetTaskId) return
       const task = tasks.find((t) => t.id === taskId)
-      if (!task || !canEditTask(task)) return
+      if (!task) return
+      const fromStatus = task.status === 'Pending completion' ? 'In progress' : task.status
+      const movingToCompleted = targetStatus === 'Completed' && fromStatus !== 'Completed'
+      const canChange = canEditTask(task) || (movingToCompleted && canMarkCompleteAsMember(task))
+      if (!canChange) return
       const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
       const dropInLowerHalf = e.clientY >= rect.top + rect.height / 2
       if (sourceStatus === targetStatus) {
+        if (!canEditTask(task)) return
         const col = taskKanbanColumns.find((c) => c.status === targetStatus)
         const order = taskColumnOrder[targetStatus] ?? col?.tasks.map((t) => t.id) ?? []
         const without = order.filter((id) => id !== taskId)
@@ -581,7 +657,6 @@ export default function Tasks() {
         setTaskColumnOrder((prev) => ({ ...prev, [targetStatus]: newOrder }))
         return
       }
-      const fromStatus = task.status === 'Pending completion' ? 'In progress' : task.status
       if (!canMoveTaskToStatus(fromStatus, targetStatus)) {
         message.warning(`Cannot move a task from "${fromStatus}" to "${targetStatus}".`)
         return
@@ -608,7 +683,7 @@ export default function Tasks() {
         message.error(err instanceof Error ? err.message : 'Failed to update task status.')
       }
     },
-    [tasks, canEditTask, updateTask, taskColumnOrder, taskKanbanColumns]
+    [tasks, canEditTask, canMarkCompleteAsMember, updateTask, taskColumnOrder, taskKanbanColumns]
   )
 
   const handleRemoveTask = useCallback(
@@ -656,7 +731,8 @@ export default function Tasks() {
             <CheckCircleOutlined style={{ color: '#52c41a', fontSize: 20 }} title="Completed" />
           )
         }
-        if (canEditTask(r)) {
+        const canComplete = canEditTask(r) || canMarkCompleteAsMember(r)
+        if (canComplete) {
           return (
             <Tooltip title="Mark as completed">
               <CheckCircleOutlined
@@ -765,8 +841,10 @@ export default function Tasks() {
         title: 'Action',
         key: 'action',
         width: 140,
-        render: (_: unknown, r: Task) =>
-          canEditTask(r) ? (
+        render: (_: unknown, r: Task) => {
+          const assignees = getTaskAssignees(r)
+          const soleAssigneeToMe = currentUserMemberId && assignees.length === 1 && assignees[0].memberId?.toUpperCase() === currentUserMemberId.toUpperCase()
+          return canEditTask(r) && !soleAssigneeToMe ? (
             <Space size="small">
               <Button type="link" size="small" icon={<EditOutlined />} onClick={() => openEditDrawer(r.id)}>
                 Edit
@@ -775,7 +853,8 @@ export default function Tasks() {
                 Remove
               </Button>
             </Space>
-          ) : null,
+          ) : null
+        },
       },
     ],
   ]
@@ -808,6 +887,13 @@ export default function Tasks() {
             onChange={(dates) => setDateRange(dates as [Dayjs | null, Dayjs | null] | null)}
             allowClear
           />
+          <Select
+            placeholder="Sort by"
+            style={{ width: 200 }}
+            value={sortBy}
+            onChange={(v) => setSortBy(v ?? 'startDateDesc')}
+            options={taskSortOptions}
+          />
           {hasActiveFilters && (
             <Button
               onClick={() => {
@@ -832,9 +918,17 @@ export default function Tasks() {
     </Card>
   )
 
+  const kanbanCardStyles = (
+    <style>{`
+      .task-kanban-column .ant-card { border: 1px solid #f0f0f0; box-shadow: none; transition: background-color 0.2s ease; }
+      .task-kanban-column .ant-card:hover { background-color: #fafafa; }
+    `}</style>
+  )
+
   const renderTaskKanban = (emptyText: string) =>
     filteredTasks.length ? (
       <div style={{ display: 'flex', gap: 16, overflowX: 'auto', paddingBottom: 8, minHeight: 400 }}>
+        {kanbanCardStyles}
         {taskKanbanColumns.map((col) => {
           const sortedTasks = reorderTasksBy(col.tasks, taskColumnOrder[col.status] ?? [])
           const visibleCount = kanbanVisibleCount[col.status] || KANBAN_INITIAL_COUNT
@@ -844,6 +938,7 @@ export default function Tasks() {
           return (
             <div
               key={col.status}
+              className="task-kanban-column"
               onDragOver={(e) => handleTaskDragOver(e, col.status)}
               onDragLeave={handleTaskDragLeave}
               onDrop={(e) => handleTaskDrop(e, col.status)}
@@ -867,33 +962,47 @@ export default function Tasks() {
               <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
                 {visibleTasks.map((t) => {
                   const assignees = getTaskAssignees(t)
-                  const editable = canEditTask(t)
+                  const soleAssigneeToMe = currentUserMemberId && assignees.length === 1 && assignees[0].memberId?.toUpperCase() === currentUserMemberId.toUpperCase()
+                  const canEdit = canEditTask(t) && !soleAssigneeToMe
+                  const canComplete = (canEditTask(t) || canMarkCompleteAsMember(t)) && t.status !== 'Completed'
+                  const canOpenDrawer = true
+                  const canDrag = canEditTask(t) || (canMarkCompleteAsMember(t) && col.status !== 'Completed')
                   return (
                     <Card
                       key={t.id}
                       size="small"
-                      hoverable={editable}
-                      draggable={editable}
-                      onDragStart={editable ? (e) => handleTaskDragStart(e, t.id, col.status) : undefined}
-                      onDragOver={editable ? (e) => { e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = 'move' } : undefined}
-                      onDrop={editable ? (e) => handleTaskDropOnCard(e, t.id, col.status) : undefined}
-                      onClick={editable ? () => openEditDrawer(t.id) : undefined}
-                      styles={{ body: { padding: 12 }, root: editable ? { cursor: 'grab' } : undefined }}
+                      hoverable={false}
+                      draggable={canDrag}
+                      onDragStart={canDrag ? (e) => handleTaskDragStart(e, t.id, col.status) : undefined}
+                      onDragOver={canDrag ? (e) => { e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = 'move' } : undefined}
+                      onDrop={canDrag ? (e) => handleTaskDropOnCard(e, t.id, col.status) : undefined}
+                      onClick={canOpenDrawer ? () => openEditDrawer(t.id) : undefined}
+                      styles={{ body: { padding: 12 }, root: canOpenDrawer ? { cursor: canEdit ? 'grab' : 'pointer' } : undefined }}
                     >
-                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-                        <Typography.Text strong style={{ display: 'block', minWidth: 0 }} ellipsis={{ tooltip: t.taskName }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'flex-start' }}>
+                        <Typography.Text strong style={{ display: 'block', minWidth: 0, flex: 1 }} ellipsis={{ tooltip: t.taskName }}>
                           {t.taskName}
                         </Typography.Text>
-                        {canEditTask(t) && (
-                          <Button
-                            type="link"
-                            size="small"
-                            icon={<EditOutlined />}
-                            onClick={(e) => { e.stopPropagation(); openEditDrawer(t.id) }}
-                          >
-                            Edit
-                          </Button>
-                        )}
+                        <Space size={4}>
+                          {canComplete && (
+                            <Tooltip title="Mark as completed">
+                              <CheckCircleOutlined
+                                style={{ color: 'rgba(0,0,0,0.25)', fontSize: 16, cursor: 'pointer', flexShrink: 0 }}
+                                onClick={(e) => { e.stopPropagation(); handleMarkComplete(t) }}
+                              />
+                            </Tooltip>
+                          )}
+                          {canEdit && (
+                            <Button
+                              type="link"
+                              size="small"
+                              icon={<EditOutlined />}
+                              onClick={(e) => { e.stopPropagation(); openEditDrawer(t.id) }}
+                            >
+                              Edit
+                            </Button>
+                          )}
+                        </Space>
                       </div>
                       <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block' }} ellipsis={{ tooltip: t.projectName }}>
                         {t.projectName}
@@ -989,7 +1098,7 @@ export default function Tasks() {
                 pageSize,
                 total: filteredTasks.length,
                 showSizeChanger: true,
-                pageSizeOptions: ['10', '20', '50'],
+                pageSizeOptions: [10, 20, 50],
                 showTotal: (total) => `Total ${total} items`,
                 onChange: (page, size) => {
                   setCurrentPage(page)
@@ -1031,7 +1140,7 @@ export default function Tasks() {
                 pageSize,
                 total: filteredTasks.length,
                 showSizeChanger: true,
-                pageSizeOptions: ['10', '20', '50'],
+                pageSizeOptions: [10, 20, 50],
                 showTotal: (total) => `Total ${total} items`,
                 onChange: (page, size) => {
                   setCurrentPage(page)
@@ -1069,7 +1178,7 @@ export default function Tasks() {
       <Tabs activeKey={activeTab} onChange={setActiveTab} items={tabItems} />
 
       <Drawer
-        title={task ? `Edit: ${task.taskName}` : 'Edit task'}
+        title={task ? (canEditTask(task) && !(currentUserMemberId && getTaskAssignees(task).length === 1 && getTaskAssignees(task)[0].memberId?.toUpperCase() === currentUserMemberId.toUpperCase()) ? `Edit: ${task.taskName}` : task.taskName) : 'Task'}
         width={560}
         open={editDrawerOpen}
         onClose={closeEditDrawer}
@@ -1089,10 +1198,14 @@ export default function Tasks() {
                   key: 'details',
                   label: (
                     <span>
-                      <EditOutlined /> Edit
+                      {canEditTask(task!) && !(currentUserMemberId && getTaskAssignees(task!).length === 1 && getTaskAssignees(task!)[0].memberId?.toUpperCase() === currentUserMemberId.toUpperCase()) ? <><EditOutlined /> Edit</> : <><UserOutlined /> Details</>}
                     </span>
                   ),
-                  children: (
+                  children: (() => {
+                    const assignees = getTaskAssignees(task!)
+                    const soleAssigneeToMe = currentUserMemberId && assignees.length === 1 && assignees[0].memberId?.toUpperCase() === currentUserMemberId.toUpperCase()
+                    const showEditForm = canEditTask(task!) && !soleAssigneeToMe
+                    return showEditForm ? (
                     <Form form={editForm} layout="vertical" onFinish={onFinishEdit}>
                       <Form.Item name="projectId" label="Related Project" rules={[{ required: true, message: 'Select a project' }]}>
                         <Select placeholder="Select project" options={projectOptions} showSearch optionFilterProp="label" allowClear disabled={task?.status === 'Completed'} />
@@ -1166,10 +1279,7 @@ export default function Tasks() {
                             }
                             disabled={task?.status === 'Completed'}
                             onClick={() => {
-                              if (!task || !canEditTask(task)) {
-                                message.error('Only the project lead for this project can mark tasks as completed.')
-                                return
-                              }
+                              if (!task) return
                               editForm.setFieldsValue({ status: 'Completed' })
                               onFinishEdit({ ...editForm.getFieldsValue(), status: 'Completed' })
                               message.success('Task marked as completed.')
@@ -1188,7 +1298,67 @@ export default function Tasks() {
                         </Space>
                       </Form.Item>
                     </Form>
-                  ),
+                  ) : (
+                    <div>
+                      <Typography.Paragraph><strong>Project:</strong> {task.projectName} ({task.projectId})</Typography.Paragraph>
+                      <Typography.Paragraph><strong>Status:</strong> <Tag color={task.status === 'Completed' ? 'green' : task.status === 'In progress' ? 'blue' : 'default'}>{task.status}</Tag></Typography.Paragraph>
+                      {(task.startDate || task.endDate) && (
+                        <Typography.Paragraph>
+                          <strong>Dates:</strong> {task.startDate || '—'} to {task.endDate || '—'}
+                        </Typography.Paragraph>
+                      )}
+                      {getTaskAssignees(task).length > 0 && (
+                        <Typography.Paragraph>
+                          <strong>Assignees:</strong>{' '}
+                          {getTaskAssignees(task).map((a) => a.name).join(', ')}
+                        </Typography.Paragraph>
+                      )}
+                      {(canEditTask(task!) || canMarkCompleteAsMember(task!)) && (
+                        <Form.Item style={{ marginTop: 24, marginBottom: 0 }}>
+                          <Button
+                            type="default"
+                            icon={<CheckCircleOutlined />}
+                            style={
+                              task?.status === 'Completed'
+                                ? { borderColor: '#d9d9d9', color: 'rgba(0,0,0,0.25)', cursor: 'not-allowed' }
+                                : { borderColor: '#52c41a', color: '#52c41a' }
+                            }
+                            disabled={task?.status === 'Completed'}
+                            onClick={() => {
+                              if (!task || task.status === 'Completed') return
+                              const canComplete = canEditTask(task) || canMarkCompleteAsMember(task)
+                              if (!canComplete) return
+                              if (canEditTask(task)) {
+                                editForm.setFieldsValue({ status: 'Completed' })
+                                onFinishEdit({ ...editForm.getFieldsValue(), status: 'Completed' })
+                                message.success('Task marked as completed.')
+                              } else {
+                                Modal.confirm({
+                                  title: 'Mark task as completed?',
+                                  content: 'This will set the task status to Completed.',
+                                  okText: 'Mark as completed',
+                                  cancelText: 'Cancel',
+                                  onOk: async () => {
+                                    try {
+                                      await updateTask(task.id, { status: 'Completed', completedAt: new Date().toISOString() })
+                                      message.success('Task marked as completed.')
+                                      setEditDrawerOpen(false)
+                                      setSelectedTaskId(null)
+                                    } catch (err) {
+                                      message.error(err instanceof Error ? err.message : 'Failed to update task.')
+                                    }
+                                  },
+                                })
+                              }
+                            }}
+                          >
+                            {task?.status === 'Completed' ? 'Completed' : 'Mark as completed'}
+                          </Button>
+                        </Form.Item>
+                      )}
+                    </div>
+                  )
+                  })()
                 },
                 {
                   key: 'notes',
@@ -1199,17 +1369,25 @@ export default function Tasks() {
                   ),
                   children: (
                     <>
-                      <Card size="small" title="Add note" style={{ marginBottom: 16 }}>
-                        <Space.Compact style={{ width: '100%' }} direction="vertical">
-                          <Input.TextArea
-                            rows={3}
-                            placeholder="Write a note..."
-                            value={noteInput}
-                            onChange={(e) => setNoteInput(e.target.value)}
-                          />
-                          <Button type="primary" onClick={onAddNote} loading={noteSubmitting} disabled={noteSubmitting}>Add note</Button>
-                        </Space.Compact>
-                      </Card>
+                      {(() => {
+                        const assignees = getTaskAssignees(task!)
+                        const soleAssigneeToMe = currentUserMemberId && assignees.length === 1 && assignees[0].memberId?.toUpperCase() === currentUserMemberId.toUpperCase()
+                        const canAddNoteToCompleted = (isSuperAdmin || isAdmin) || (canEditTask(task!) && !soleAssigneeToMe)
+                        const canAddNote = task?.status !== 'Completed' || canAddNoteToCompleted
+                        return canAddNote && (
+                        <Card size="small" title="Add note" style={{ marginBottom: 16 }}>
+                          <Space.Compact style={{ width: '100%' }} direction="vertical">
+                            <Input.TextArea
+                              rows={3}
+                              placeholder="Write a note..."
+                              value={noteInput}
+                              onChange={(e) => setNoteInput(e.target.value)}
+                            />
+                            <Button type="primary" onClick={onAddNote} loading={noteSubmitting} disabled={noteSubmitting}>Add note</Button>
+                          </Space.Compact>
+                        </Card>
+                        )
+                      })()}
                       <Table
                         dataSource={task.notes ?? []}
                         columns={noteColumns}

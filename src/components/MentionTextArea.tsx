@@ -16,6 +16,8 @@ interface MentionTextAreaProps {
   rows?: number
   disabled?: boolean
   members: MemberOption[]
+  maxLength?: number
+  showCount?: boolean
 }
 
 /** Find the start of the @mention query before the cursor (e.g. "@" or "@jane"). */
@@ -40,6 +42,8 @@ export default function MentionTextArea({
   rows = 5,
   disabled,
   members,
+  maxLength,
+  showCount,
 }: MentionTextAreaProps) {
   const [showMention, setShowMention] = useState(false)
   const [mentionStart, setMentionStart] = useState(0)
@@ -55,7 +59,8 @@ export default function MentionTextArea({
   const slice = filteredMembers.slice(0, 8)
 
   const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    const v = e.target.value
+    let v = e.target.value
+    if (maxLength != null && v.length > maxLength) v = v.slice(0, maxLength)
     const cursor = e.target.selectionStart ?? v.length
     onChange?.(v)
 
@@ -75,7 +80,8 @@ export default function MentionTextArea({
     const mention = `@[${member.name}](${member.memberId})`
     const before = value.slice(0, mentionStart)
     const after = value.slice(mentionEnd)
-    const newValue = before + mention + ' ' + after
+    let newValue = before + mention + ' ' + after
+    if (maxLength != null && newValue.length > maxLength) newValue = newValue.slice(0, maxLength)
     onChange?.(newValue)
     setShowMention(false)
 
@@ -124,6 +130,8 @@ export default function MentionTextArea({
         placeholder={placeholder}
         rows={rows}
         disabled={disabled}
+        maxLength={maxLength}
+        showCount={showCount}
       />
       {showMention && (
         <div

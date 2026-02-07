@@ -6,6 +6,7 @@ import { ArrowLeftOutlined, TeamOutlined } from '@ant-design/icons'
 import { useProjectMeta } from '../context/ProjectMetaContext'
 import { getMembersList } from '../data/members'
 import { createProject } from '../data/projects'
+import { createNotification } from '../data/notifications'
 import { useUnsavedChanges } from '../context/UnsavedChangesContext'
 import { useCurrentUser } from '../context/CurrentUserContext'
 
@@ -33,7 +34,7 @@ function formatBytes(bytes?: number) {
 
 export default function NewProject() {
   const navigate = useNavigate()
-  const { isSuperAdmin, displayName } = useCurrentUser()
+  const { isAdmin, displayName } = useCurrentUser()
   const [submitting, setSubmitting] = useState(false)
   const [form] = Form.useForm()
   const { categories, tags } = useProjectMeta()
@@ -41,8 +42,8 @@ export default function NewProject() {
   const { dirty, setDirty, confirmNavigation } = useUnsavedChanges()
 
   useEffect(() => {
-    if (!isSuperAdmin) navigate('/projects', { replace: true })
-  }, [isSuperAdmin, navigate])
+    if (!isAdmin) navigate('/projects', { replace: true })
+  }, [isAdmin, navigate])
 
   useEffect(() => {
     // Reset dirty flag when entering/leaving this page
@@ -165,8 +166,9 @@ export default function NewProject() {
       onOk: async () => {
         setSubmitting(true)
         try {
+          const projectName = String(values.projectName ?? '')
           const projectId = await createProject({
-            projectName: String(values.projectName ?? ''),
+            projectName,
             projectCategory: String(values.projectCategory ?? ''),
             projectTag: tagStr,
             priority: (values.priority as 'Low' | 'Medium' | 'High' | 'Urgent') ?? 'Medium',
@@ -184,6 +186,13 @@ export default function NewProject() {
           })
           message.success('Project created successfully.')
           setDirty(false)
+          for (const m of members) {
+            createNotification(m.memberId, {
+              type: 'project_added',
+              title: `You were added to project: ${projectName}`,
+              link: `/projects/${projectId}`,
+            }).catch(() => {})
+          }
           navigate(`/projects/${projectId}`)
         } catch (err) {
           message.error(err instanceof Error ? err.message : 'Failed to create project.')

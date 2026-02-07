@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
-import { Layout, Menu, Typography, Dropdown, Space, Badge, Button, Modal } from 'antd'
+import { Layout, Menu, Typography, Dropdown, Space, Badge, Button, Modal, Tooltip, message, List } from 'antd'
 import type { MenuProps } from 'antd'
 import {
   DashboardOutlined,
@@ -19,10 +19,12 @@ import {
   ReadOutlined,
   DownOutlined,
   SettingOutlined,
+  SunOutlined,
 } from '@ant-design/icons'
 
 import { useAuth } from '../context/AuthContext'
 import { useCurrentUser } from '../context/CurrentUserContext'
+import { useNotifications } from '../context/NotificationContext'
 import { useUnsavedChanges } from '../context/UnsavedChangesContext'
 import MemberAvatar from './MemberAvatar'
 
@@ -30,12 +32,7 @@ const { Header, Sider, Content, Footer } = Layout
 
 const routesForSuperAdmin: MenuProps['items'] = [
   { key: '/', icon: <DashboardOutlined />, label: 'Dashboard' },
-  {
-    key: 'project-sub',
-    icon: <ProjectOutlined />,
-    label: 'Project',
-    children: [{ key: '/projects', label: 'All Projects' }],
-  },
+  { key: '/projects', icon: <ProjectOutlined />, label: 'Projects' },
   { key: '/tasks', icon: <CheckSquareOutlined />, label: 'Tasks' },
   { key: '/members', icon: <TeamOutlined />, label: 'Members' },
   { key: '/admins', icon: <SafetyCertificateOutlined />, label: 'Admins' },
@@ -46,14 +43,7 @@ const routesForSuperAdmin: MenuProps['items'] = [
 
 const routesForProjectLead: MenuProps['items'] = [
   { key: '/', icon: <DashboardOutlined />, label: 'Dashboard' },
-  {
-    key: 'project-sub',
-    icon: <ProjectOutlined />,
-    label: 'Project',
-    children: [
-      { key: '/projects', label: 'All Projects' },
-    ],
-  },
+  { key: '/projects', icon: <ProjectOutlined />, label: 'Projects' },
   { key: '/tasks', icon: <CheckSquareOutlined />, label: 'Tasks' },
   { key: '/members', icon: <TeamOutlined />, label: 'Members' },
   { key: '/admins', icon: <SafetyCertificateOutlined />, label: 'Admins' },
@@ -67,10 +57,74 @@ export default function AppLayout() {
   const navigate = useNavigate()
   const location = useLocation()
   const { signOut: authSignOut } = useAuth()
-  const { currentAdmin, currentAdminId, currentMember, profilePath, displayName, setCurrentAdminId, isLoggedIn, isSuperAdmin, isProjectLead } = useCurrentUser()
-  const canAccessDashboard = isSuperAdmin || isProjectLead
-  const routes = isSuperAdmin ? routesForSuperAdmin : routesForProjectLead
+  const { currentAdmin, currentAdminId, currentMember, profilePath, displayName, setCurrentAdminId, isLoggedIn, isSuperAdmin, isProjectLead, isAdmin } = useCurrentUser()
+  const canAccessDashboard = isSuperAdmin || isProjectLead || isAdmin
+  const routes = (isSuperAdmin || isAdmin) ? routesForSuperAdmin : routesForProjectLead
+  const { notifications, unreadCount, markAsRead, markAllAsRead } = useNotifications()
   const { confirmNavigation } = useUnsavedChanges()
+  const [notificationOpen, setNotificationOpen] = useState(false)
+
+  const formatNotificationTime = (iso: string) => {
+    if (!iso) return ''
+    const date = new Date(iso)
+    const now = new Date()
+    const diffMs = now.getTime() - date.getTime()
+    const diffMins = Math.floor(diffMs / 60000)
+    const diffHours = Math.floor(diffMs / 3600000)
+    const diffDays = Math.floor(diffMs / 86400000)
+    if (diffMins < 1) return 'Just now'
+    if (diffMins < 60) return `${diffMins}m ago`
+    if (diffHours < 24) return `${diffHours}h ago`
+    if (diffDays < 7) return `${diffDays}d ago`
+    return date.toLocaleDateString()
+  }
+
+  const notificationDropdown = (
+    <div style={{ width: 360, maxHeight: 400, background: '#fff', borderRadius: 8, boxShadow: '0 6px 16px rgba(0,0,0,0.08)', overflow: 'hidden' }}>
+      <div style={{ padding: '12px 16px', borderBottom: '1px solid #f0f0f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <Typography.Text strong>Notifications</Typography.Text>
+        {unreadCount > 0 && (
+          <Button type="link" size="small" onClick={() => markAllAsRead()}>
+            Mark all read
+          </Button>
+        )}
+      </div>
+      <div style={{ maxHeight: 320, overflowY: 'auto' }}>
+        {notifications.length === 0 ? (
+          <div style={{ padding: 24, textAlign: 'center', color: 'rgba(0,0,0,0.45)' }}>
+            <Typography.Text>No notifications yet.</Typography.Text>
+          </div>
+        ) : (
+          <List
+            size="small"
+            dataSource={notifications}
+            renderItem={(n) => (
+              <List.Item
+                style={{
+                  padding: '12px 16px',
+                  cursor: 'pointer',
+                  background: n.read ? 'transparent' : 'rgba(22,119,255,0.04)',
+                  borderBottom: '1px solid #f5f5f5',
+                }}
+                onClick={() => {
+                  if (!n.read) markAsRead(n.id)
+                  setNotificationOpen(false)
+                  confirmNavigation(n.link, () => navigate(n.link))
+                }}
+              >
+                <List.Item.Meta
+                  title={<Typography.Text ellipsis style={{ fontWeight: n.read ? 400 : 500 }}>{n.title}</Typography.Text>}
+                  description={
+                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>{formatNotificationTime(n.createdAt)}</Typography.Text>
+                  }
+                />
+              </List.Item>
+            )}
+          />
+        )}
+      </div>
+    </div>
+  )
   const hasProfile = Boolean(currentAdminId || currentMember)
 
   const userMenuItems: MenuProps['items'] = [
@@ -175,7 +229,7 @@ export default function AppLayout() {
           theme="light"
           mode="inline"
           selectedKeys={[location.pathname]}
-          defaultOpenKeys={['project-sub']}
+          defaultOpenKeys={[]}
           items={routes as MenuProps['items']}
           onClick={({ key }) => confirmNavigation(String(key), () => navigate(String(key)))}
           style={{ borderRight: 0, marginTop: 8 }}
@@ -208,6 +262,14 @@ export default function AppLayout() {
             Project Management
           </Typography.Text>
           <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Tooltip title="Coming soon">
+              <span
+                style={{ fontSize: 18, color: 'rgba(0,0,0,0.65)', cursor: 'pointer', padding: 4, display: 'inline-flex' }}
+                onClick={() => message.info('Coming soon')}
+              >
+                <SunOutlined />
+              </span>
+            </Tooltip>
             <span
               style={{ fontSize: 18, color: 'rgba(0,0,0,0.65)', cursor: 'pointer', padding: 4, display: 'inline-flex' }}
               title="Documentation"
@@ -215,15 +277,22 @@ export default function AppLayout() {
             >
               <BookOutlined />
             </span>
-            <Badge count={0} size="small" offset={[-2, 2]}>
-              <span
-                style={{ fontSize: 18, color: 'rgba(0,0,0,0.65)', cursor: 'pointer', padding: 4, display: 'inline-flex' }}
-                title="Notifications"
-                onClick={() => {}}
-              >
-                <BellOutlined />
-              </span>
-            </Badge>
+            <Dropdown
+              dropdownRender={() => notificationDropdown}
+              trigger={['click']}
+              placement="bottomRight"
+              open={notificationOpen}
+              onOpenChange={setNotificationOpen}
+            >
+              <Badge count={unreadCount} size="small" offset={[-2, 2]}>
+                <span
+                  style={{ fontSize: 18, color: 'rgba(0,0,0,0.65)', cursor: 'pointer', padding: 4, display: 'inline-flex' }}
+                  title="Notifications"
+                >
+                  <BellOutlined />
+                </span>
+              </Badge>
+            </Dropdown>
             <Dropdown menu={{ items: userMenuItems, onClick: onUserMenuClick }} trigger={['click']} placement="bottomRight">
               <Space style={{ cursor: 'pointer', marginLeft: 8 }}>
                 <MemberAvatar

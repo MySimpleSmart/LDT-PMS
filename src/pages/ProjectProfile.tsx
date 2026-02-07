@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from 'react'
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   Typography,
@@ -27,7 +27,8 @@ import { ArrowLeftOutlined, EditOutlined, TeamOutlined, CommentOutlined, FileOut
 import dayjs from 'dayjs'
 
 import { getProjectById, updateProjectById, deleteProject, isProjectOverdue, type ProjectDetail } from '../data/projects'
-import { appendMemberActivity, getMembersList } from '../data/members'
+import { createNotification, createNotificationsForMembers } from '../data/notifications'
+import { appendMemberActivity, getMembersList, getAdminMemberIds } from '../data/members'
 import { getTaskAssignees } from '../data/tasks'
 import { useCurrentUser } from '../context/CurrentUserContext'
 import { useProjectMeta } from '../context/ProjectMetaContext'
@@ -128,8 +129,8 @@ const addMemberRoleOptions = [
 export default function ProjectProfile() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
-  const { currentAdminId, currentMember, isSuperAdmin, currentUserMemberId, displayName } = useCurrentUser()
-  const canConfirmRejectPending = (isSuperAdmin || currentAdminId) && !currentMember
+  const { currentAdminId, currentMember, isSuperAdmin, isAdmin, currentUserMemberId, displayName } = useCurrentUser()
+  const canConfirmRejectPending = isSuperAdmin || isAdmin
   const { categories, tags } = useProjectMeta()
   const { tasks: globalTasks, updateTask, addTask, removeTask } = useTasks()
   const { setDirty: setGlobalDirty, confirmNavigation } = useUnsavedChanges()
@@ -162,13 +163,26 @@ export default function ProjectProfile() {
   // Project Lead may only edit/complete/upload projects they lead; Super Admin/Admin may do any project
   const isLeadOfThisProject = useMemo(() => {
     if (!project) return false
-    if (isSuperAdmin) return true
+    if (isSuperAdmin || isAdmin) return true
     if (!currentUserMemberId) return false
     const members = Array.isArray(project.members) ? project.members : []
     const leadMember = members.find((m) => m && m.role === 'Lead')
     return leadMember?.memberId === currentUserMemberId
-  }, [project, isSuperAdmin, currentUserMemberId])
+  }, [project, isSuperAdmin, isAdmin, currentUserMemberId])
   const canManageProjectFiles = canConfirmRejectPending || isLeadOfThisProject
+  const canRemove = isSuperAdmin
+
+  /** Member (no manage rights) can mark complete only when the task is assigned solely to them. */
+  const canMarkCompleteAsMember = useCallback(
+    (record: ProjectTask) => {
+      if (canManageProjectFiles) return false
+      if (!currentUserMemberId) return false
+      const assignees = getTaskAssignees(record)
+      const soleAssignee = assignees.length === 1 ? assignees[0] : null
+      return Boolean(soleAssignee && soleAssignee.memberId?.toUpperCase() === currentUserMemberId.toUpperCase())
+    },
+    [canManageProjectFiles, currentUserMemberId]
+  )
 
   const [localNotes, setLocalNotes] = useState<{ key: string; author: string; content: string; createdAt: string }[]>([])
   const [localMembers, setLocalMembers] = useState<ProjectMember[]>([])
@@ -263,7 +277,7 @@ export default function ProjectProfile() {
   }
 
   const canEditDeleteNote = (note: ProjectNote) => {
-    const isAdminOrLead = isLeadOfThisProject || isSuperAdmin || (currentAdminId && !currentMember)
+    const isAdminOrLead = isLeadOfThisProject || isSuperAdmin || isAdmin || (currentAdminId && !currentMember)
     const isOwner = note.author === (displayName || 'Current user')
     return Boolean(isAdminOrLead || isOwner)
   }
@@ -401,6 +415,14 @@ export default function ProjectProfile() {
             await updateProjectById(id, { ...updates, activityLog })
             logToProfileActivity(activity)
           }
+          if (updates.status === 'Pending completion') {
+            const adminIds = await getAdminMemberIds()
+            createNotificationsForMembers(adminIds, {
+              type: 'project_pending_approval',
+              title: `Project "${project?.projectName ?? 'Unknown'}" is pending approval.`,
+              link: `/projects/${id}`,
+            }).catch(() => {})
+          }
         } else if (id) {
           const activity = pushActivity('project_updated', 'Updated project details')
           const activityLog = [...(project.activityLog || []), activity]
@@ -422,12 +444,12 @@ export default function ProjectProfile() {
 
   const markProjectCompleted = () => {
     // Only project lead or Super Admin can mark as completed; contributors cannot
-    if (!isSuperAdmin && !isLeadOfThisProject) {
-      message.error('Only the project lead can mark this project as completed.')
+    if (!isSuperAdmin && !isAdmin && !isLeadOfThisProject) {
+      message.error('Only the project lead or an admin can mark this project as completed.')
       return
     }
     // Project Lead can only request completion (Pending completion); only Super Admin can set Completed
-    const targetStatus = isSuperAdmin ? 'Completed' : 'Pending completion'
+    const targetStatus = (isSuperAdmin || isAdmin) ? 'Completed' : 'Pending completion'
     editForm.setFieldsValue({ status: targetStatus })
     const values = { ...editForm.getFieldsValue(), status: targetStatus }
     onEditFinish(values)
@@ -444,6 +466,14 @@ export default function ProjectProfile() {
     logToProfileActivity(activity)
     setLocalTasks((prev) => prev.map((t) => ({ ...t, status: 'Completed', completedAt })))
     globalTasks.filter((t) => t.projectId === project.projectId).forEach((t) => updateTask(t.id, { status: 'Completed', completedAt }))
+    const leadMember = Array.isArray(project.members) ? project.members.find((m) => m?.role === 'Lead') : undefined
+    if (leadMember?.memberId) {
+      createNotification(leadMember.memberId, {
+        type: 'project_completed',
+        title: `Project "${project.projectName}" has been confirmed and marked as Completed.`,
+        link: `/projects/${id}`,
+      }).catch(() => {})
+    }
     message.success('Project confirmed and marked as Completed.')
     setProjectVersion((v) => v + 1)
   }
@@ -454,6 +484,14 @@ export default function ProjectProfile() {
     const activityLog = [...(project.activityLog || []), activity]
     await updateProjectById(id, { status: 'In Progress', activityLog })
     logToProfileActivity(activity)
+    const leadMember = Array.isArray(project.members) ? project.members.find((m) => m?.role === 'Lead') : undefined
+    if (leadMember?.memberId) {
+      createNotification(leadMember.memberId, {
+        type: 'project_rejected',
+        title: `Project "${project.projectName}" completion was rejected. Status set back to In Progress.`,
+        link: `/projects/${id}`,
+      }).catch(() => {})
+    }
     message.success('Project rejected. Status set back to In Progress.')
     setProjectVersion((v) => v + 1)
   }
@@ -561,6 +599,11 @@ export default function ProjectProfile() {
       logToProfileActivity(activity)
       const updated = await getProjectById(id)
       if (updated) setProject(updated)
+      createNotification(chosen.memberId, {
+        type: 'project_added',
+        title: `You were added to project: ${project.projectName}`,
+        link: `/projects/${id}`,
+      }).catch(() => {})
       setLocalMembers((prev) => prev.filter((m) => m.memberId !== chosen.memberId))
       message.success('Member added to project.')
       addMemberForm.resetFields()
@@ -721,8 +764,9 @@ export default function ProjectProfile() {
 
   const handleMarkCompleteTask = (record: ProjectTask) => {
     if (record.status === 'Completed') return
-    if (!canManageProjectFiles) {
-      message.error('Only the project lead or an admin can mark tasks as completed.')
+    const canComplete = canManageProjectFiles || canMarkCompleteAsMember(record)
+    if (!canComplete) {
+      message.error('You cannot mark this task as completed. Only the project lead, admin, or the sole assignee can.')
       return
     }
     const taskId = getTaskId(record)
@@ -812,7 +856,7 @@ export default function ProjectProfile() {
     { title: 'Member', dataIndex: 'name', key: 'name' },
     { title: 'Member ID', dataIndex: 'memberId', key: 'memberId' },
     { title: 'Role', dataIndex: 'role', key: 'role' },
-    ...(isSuperAdmin
+    ...((isSuperAdmin || isAdmin)
       ? [
           {
             title: 'Action',
@@ -837,18 +881,20 @@ export default function ProjectProfile() {
                         <Button type="link" size="small" icon={<AuditOutlined />} onClick={() => onSetProjectRole(record, 'Moderator')} />
                       </Tooltip>
                     )}
-                    <Tooltip title={isLead ? 'Set another member as project lead first.' : 'Remove from project'}>
-                      <span>
-                        <Button
-                          type="link"
-                          danger
-                          size="small"
-                          icon={<DeleteOutlined />}
-                          disabled={isLead}
-                          onClick={() => onRemoveMember(record, localMembers.some((m) => m.memberId === record.memberId))}
-                        />
-                      </span>
-                    </Tooltip>
+                    {canRemove && (
+                      <Tooltip title={isLead ? 'Set another member as project lead first.' : 'Remove from project'}>
+                        <span>
+                          <Button
+                            type="link"
+                            danger
+                            size="small"
+                            icon={<DeleteOutlined />}
+                            disabled={isLead}
+                            onClick={() => onRemoveMember(record, localMembers.some((m) => m.memberId === record.memberId))}
+                          />
+                        </span>
+                      </Tooltip>
+                    )}
                   </Space>
               )
             },
@@ -881,7 +927,7 @@ export default function ProjectProfile() {
     { title: 'File', dataIndex: 'name', key: 'name' },
     { title: 'Size', dataIndex: 'size', key: 'size' },
     { title: 'Uploaded', dataIndex: 'uploadedAt', key: 'uploadedAt' },
-    ...(canManageProjectFiles
+    ...(canManageProjectFiles && canRemove
       ? [
           {
             title: 'Action',
@@ -915,7 +961,8 @@ export default function ProjectProfile() {
             <CheckCircleOutlined style={{ color: '#52c41a', fontSize: 20 }} title="Completed" />
           )
         }
-        if (canManageProjectFiles) {
+        const canComplete = canManageProjectFiles || canMarkCompleteAsMember(record)
+        if (canComplete) {
           return (
             <Tooltip title="Mark as completed">
               <CheckCircleOutlined
@@ -1016,16 +1063,23 @@ export default function ProjectProfile() {
             title: 'Action',
             key: 'action',
             width: 140,
-            render: (_: unknown, record: ProjectTask) => (
-              <Space size="small">
-                <Button type="link" size="small" icon={<EditOutlined />} onClick={() => openTaskOnTasksPage(record)}>
-                  Edit
-                </Button>
-                <Button type="link" size="small" danger icon={<DeleteOutlined />} onClick={() => handleRemoveTaskFromProject(record)}>
-                  Remove
-                </Button>
-              </Space>
-            ),
+            render: (_: unknown, record: ProjectTask) => {
+              const assignees = getTaskAssignees(record)
+              const soleAssigneeToMe = currentUserMemberId && assignees.length === 1 && assignees[0].memberId?.toUpperCase() === currentUserMemberId.toUpperCase()
+              if (soleAssigneeToMe) return null
+              return (
+                <Space size="small">
+                  <Button type="link" size="small" icon={<EditOutlined />} onClick={() => openTaskOnTasksPage(record)}>
+                    Edit
+                  </Button>
+                  {canRemove && (
+                    <Button type="link" size="small" danger icon={<DeleteOutlined />} onClick={() => handleRemoveTaskFromProject(record)}>
+                      Remove
+                    </Button>
+                  )}
+                </Space>
+              )
+            },
           },
         ]
       : []),
@@ -1062,11 +1116,11 @@ export default function ProjectProfile() {
               </Card>
             </Col>
           )}
-          {project.status === 'Completed' && isSuperAdmin && !project.isArchived && (
+          {project.status === 'Completed' && (isSuperAdmin || isAdmin) && !project.isArchived && (
             <Col span={24}>
               <Card size="small" title="Archive project">
                 <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 12 }}>
-                  Only Super Admin can archive. Archived projects are hidden from the main Projects list.
+                  Super Admin or Admin can archive. Archived projects are hidden from the main Projects list.
                 </Typography.Text>
                 <Button icon={<InboxOutlined />} onClick={archiveProject}>
                   Archive project
@@ -1175,7 +1229,7 @@ export default function ProjectProfile() {
           <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 8 }}>
             Progress is calculated from tasks marked Done or Completed. New tasks can only be assigned to project members.
           </Typography.Text>
-          {(isSuperAdmin || isLeadOfThisProject) && (
+          {(isSuperAdmin || isAdmin || isLeadOfThisProject) && (
           <Card size="small" title="Add task" style={{ marginBottom: 16 }}>
             <Form form={addTaskForm} layout="vertical" onFinish={onAddTask}>
               <Row gutter={16}>
@@ -1344,7 +1398,7 @@ export default function ProjectProfile() {
           <Button icon={<CommentOutlined />} onClick={openAddComment}>
             Add comment
           </Button>
-          {(isSuperAdmin || isLeadOfThisProject) && (
+          {(isSuperAdmin || isAdmin || isLeadOfThisProject) && (
             <Button
               type="primary"
               icon={<EditOutlined />}
@@ -1444,7 +1498,7 @@ export default function ProjectProfile() {
         <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>
           Project ID: {project.projectId} (read-only). Progress is calculated from tasks.
         </Typography.Text>
-        {((project.status === 'Pending completion' || project.status === 'Completed') && !isSuperAdmin) && (
+        {((project.status === 'Pending completion' || project.status === 'Completed') && !isSuperAdmin && !isAdmin) && (
           <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>
             This project is pending admin review or completed. Only an admin can change details or reopen it.
           </Typography.Text>
@@ -1459,35 +1513,35 @@ export default function ProjectProfile() {
           }}
         >
           <Form.Item name="projectName" label="Project Name" rules={[{ required: true }]}>
-            <Input placeholder="Project Alpha" disabled={(project.status === 'Pending completion' || project.status === 'Completed') && !isSuperAdmin} />
+            <Input placeholder="Project Alpha" disabled={(project.status === 'Pending completion' || project.status === 'Completed') && !isSuperAdmin && !isAdmin} />
           </Form.Item>
           <Form.Item name="projectCategory" label="Project Category" rules={[{ required: true }]}>
-            <Select placeholder="Select category" options={categoryOptions} showSearch allowClear disabled={(project.status === 'Pending completion' || project.status === 'Completed') && !isSuperAdmin} />
+            <Select placeholder="Select category" options={categoryOptions} showSearch allowClear disabled={(project.status === 'Pending completion' || project.status === 'Completed') && !isSuperAdmin && !isAdmin} />
           </Form.Item>
           <Form.Item name="projectTag" label="Project Tags">
-            <Select mode="multiple" placeholder="Select tags" options={tagOptions} showSearch allowClear disabled={(project.status === 'Pending completion' || project.status === 'Completed') && !isSuperAdmin} />
+            <Select mode="multiple" placeholder="Select tags" options={tagOptions} showSearch allowClear disabled={(project.status === 'Pending completion' || project.status === 'Completed') && !isSuperAdmin && !isAdmin} />
           </Form.Item>
           <Form.Item name="priority" label="Priority">
-            <Select options={priorityOptions} disabled={(project.status === 'Pending completion' || project.status === 'Completed') && !isSuperAdmin} />
+            <Select options={priorityOptions} disabled={(project.status === 'Pending completion' || project.status === 'Completed') && !isSuperAdmin && !isAdmin} />
           </Form.Item>
           <Row gutter={16}>
             <Col span={12}>
               <Form.Item name="startDate" label="Start Date">
-                <DatePicker style={{ width: '100%' }} disabled={(project.status === 'Pending completion' || project.status === 'Completed') && !isSuperAdmin} />
+                <DatePicker style={{ width: '100%' }} disabled={(project.status === 'Pending completion' || project.status === 'Completed') && !isSuperAdmin && !isAdmin} />
               </Form.Item>
             </Col>
             <Col span={12}>
               <Form.Item name="endDate" label="End Date">
-                <DatePicker style={{ width: '100%' }} disabled={(project.status === 'Pending completion' || project.status === 'Completed') && !isSuperAdmin} />
+                <DatePicker style={{ width: '100%' }} disabled={(project.status === 'Pending completion' || project.status === 'Completed') && !isSuperAdmin && !isAdmin} />
               </Form.Item>
             </Col>
           </Row>
           <Form.Item name="status" label="Project Status">
-            <Select options={statusOptionsBase} disabled={(project.status === 'Pending completion' || project.status === 'Completed') && !isSuperAdmin} />
+            <Select options={statusOptionsBase} disabled={(project.status === 'Pending completion' || project.status === 'Completed') && !isSuperAdmin && !isAdmin} />
           </Form.Item>
           <Form.Item label="Actions">
             <Space wrap size="middle">
-              <Button type="primary" htmlType="submit" disabled={(project.status === 'Pending completion' || project.status === 'Completed') && !isSuperAdmin}>
+              <Button type="primary" htmlType="submit" disabled={(project.status === 'Pending completion' || project.status === 'Completed') && !isSuperAdmin && !isAdmin}>
                 Save changes
               </Button>
               <Button onClick={closeProjectEditDrawer}>Cancel</Button>

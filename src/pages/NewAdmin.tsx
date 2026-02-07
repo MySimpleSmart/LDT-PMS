@@ -5,6 +5,7 @@ import { ArrowLeftOutlined } from '@ant-design/icons'
 import AvatarPicker from '../components/AvatarPicker'
 import { useProjectMeta } from '../context/ProjectMetaContext'
 import { useCurrentUser } from '../context/CurrentUserContext'
+import { isValidAustralianPhone, AU_PHONE_PLACEHOLDER, AU_PHONE_VALIDATION_MESSAGE } from '../utils/phone'
 import { ADMIN_ROLE } from '../constants/roles'
 
 const departmentOptions = [
@@ -89,8 +90,19 @@ export default function NewAdmin() {
                 <Input placeholder="sam.admin@company.com" type="email" />
               </Form.Item>
 
-              <Form.Item name="phone" label="Phone">
-                <Input placeholder="+1 234 567 8900" />
+              <Form.Item
+                name="phone"
+                label="Phone"
+                rules={[
+                  {
+                    validator: (_, value) =>
+                      !value || isValidAustralianPhone(value)
+                        ? Promise.resolve()
+                        : Promise.reject(new Error(AU_PHONE_VALIDATION_MESSAGE)),
+                  },
+                ]}
+              >
+                <Input placeholder={AU_PHONE_PLACEHOLDER} />
               </Form.Item>
             </Col>
             <Col xs={24} lg={12}>

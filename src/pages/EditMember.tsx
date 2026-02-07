@@ -2,11 +2,11 @@ import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { Card, Form, Input, Select, Button, Space, Typography, Tag, message, Row, Col, Modal, Spin } from 'antd'
 import { ArrowLeftOutlined, DeleteOutlined } from '@ant-design/icons'
-import { appendMemberActivity, getMemberById, updateMember, type MemberDetail } from '../data/members'
+import { appendMemberActivity, deleteMember, getMemberById, updateMember, type MemberDetail } from '../data/members'
+import { isValidAustralianPhone, AU_PHONE_PLACEHOLDER, AU_PHONE_VALIDATION_MESSAGE } from '../utils/phone'
 import AvatarPicker from '../components/AvatarPicker'
 import { useCurrentUser } from '../context/CurrentUserContext'
 import { useProjectMeta } from '../context/ProjectMetaContext'
-import { SYSTEM_ROLE } from '../constants/roles'
 import type { ProjectActivity } from '../types/project'
 
 const departmentOptions = [
@@ -20,7 +20,7 @@ const departmentOptions = [
 export default function EditMember() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
-  const { isSuperAdmin, currentUserMemberId, refreshMemberProfile, displayName } = useCurrentUser()
+  const { isSuperAdmin, isAdmin, currentUserMemberId, refreshMemberProfile, displayName } = useCurrentUser()
   const { jobTypes, positions } = useProjectMeta()
   const jobTypeOptions = jobTypes.map((v) => ({ value: v, label: v }))
   const positionOptions = positions.map((v) => ({ value: v, label: v }))
@@ -29,8 +29,8 @@ export default function EditMember() {
   const [loading, setLoading] = useState(!!id)
 
   useEffect(() => {
-    if (!isSuperAdmin) navigate('/members', { replace: true })
-  }, [isSuperAdmin, navigate])
+    if (!isAdmin) navigate('/members', { replace: true })
+  }, [isAdmin, navigate])
 
   useEffect(() => {
     if (!id) {
@@ -68,16 +68,21 @@ export default function EditMember() {
   }, [member, form])
 
   const handleRemoveMember = () => {
+    if (!id || !member) return
     Modal.confirm({
       title: 'Remove member',
-      content: `Are you sure you want to remove ${member?.firstName} ${member?.lastName}? They will lose access to the system.`,
+      content: `Are you sure you want to remove ${member.firstName} ${member.lastName}? They will lose access to the system. This action cannot be undone.`,
       okText: 'Remove',
       okType: 'danger',
       cancelText: 'Cancel',
-      onOk: () => {
-        // TODO: Remove from Firebase (deleteDoc from 'members' collection)
-        message.success('Member removed.')
-        navigate('/members')
+      onOk: async () => {
+        try {
+          await deleteMember(id)
+          message.success('Member removed.')
+          navigate('/members')
+        } catch (err) {
+          message.error(err instanceof Error ? err.message : 'Failed to remove member.')
+        }
       },
     })
   }
@@ -87,7 +92,8 @@ export default function EditMember() {
     if (!id || !member) return
     setSaving(true)
     try {
-      await updateMember(member.memberId, {
+      const accountStatus = (values.accountStatus ?? form.getFieldValue('accountStatus') ?? member.accountStatus) as 'Active' | 'Inactive'
+      await updateMember(id, {
         firstName: String(values.firstName ?? ''),
         lastName: String(values.lastName ?? ''),
         email: String(values.email ?? ''),
@@ -95,7 +101,7 @@ export default function EditMember() {
         department: String(values.department ?? ''),
         jobType: values.jobType ? String(values.jobType) : undefined,
         position: values.position ? String(values.position) : undefined,
-        accountStatus: (values.accountStatus as 'Active' | 'Inactive') ?? 'Active',
+        accountStatus: accountStatus === 'Active' || accountStatus === 'Inactive' ? accountStatus : 'Active',
         avatarUrl: values.profileImage ? String(values.profileImage) : null,
       })
       const activity: ProjectActivity = {
@@ -105,7 +111,7 @@ export default function EditMember() {
         author: displayName || 'Current user',
         createdAt: new Date().toISOString(),
       }
-      appendMemberActivity(member.memberId, activity).catch(() => {})
+      appendMemberActivity(id, activity).catch(() => {})
       const isEditingSelf = currentUserMemberId && member.memberId.toUpperCase() === currentUserMemberId.toUpperCase()
       if (isEditingSelf) await refreshMemberProfile()
       message.success('Profile updated successfully.')
@@ -203,8 +209,19 @@ export default function EditMember() {
                 <Input placeholder="jane.doe@company.com" type="email" />
               </Form.Item>
 
-              <Form.Item name="phone" label="Phone">
-                <Input placeholder="+1 234 567 8900" />
+              <Form.Item
+                name="phone"
+                label="Phone"
+                rules={[
+                  {
+                    validator: (_, value) =>
+                      !value || isValidAustralianPhone(value)
+                        ? Promise.resolve()
+                        : Promise.reject(new Error(AU_PHONE_VALIDATION_MESSAGE)),
+                  },
+                ]}
+              >
+                <Input placeholder={AU_PHONE_PLACEHOLDER} />
               </Form.Item>
             </Col>
             <Col xs={24} lg={12}>
@@ -223,7 +240,7 @@ export default function EditMember() {
               </Form.Item>
 
               <Form.Item label="Role">
-                <Tag color="default">{SYSTEM_ROLE.MEMBER}</Tag>
+                <Tag color={member.role === 'Super Admin' ? 'gold' : member.role === 'Admin' ? 'blue' : 'default'}>{member.role}</Tag>
               </Form.Item>
 
               <Form.Item name="jobType" label="Job type" rules={[{ required: true, message: 'Please select job type' }]}>
@@ -253,7 +270,7 @@ export default function EditMember() {
               <Button onClick={() => navigate(`/members/${id}`)} disabled={saving}>
                 Cancel
               </Button>
-              {isSuperAdmin && (
+              {(isSuperAdmin) && (
                 <Button danger icon={<DeleteOutlined />} onClick={handleRemoveMember}>
                   Remove member
                 </Button>

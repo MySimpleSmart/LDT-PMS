@@ -18,8 +18,11 @@ import {
 import type { TabsProps } from 'antd'
 import { ArrowLeftOutlined, MailOutlined, PhoneOutlined, SettingOutlined, ProjectOutlined, CheckSquareOutlined, IdcardOutlined, EditOutlined, HistoryOutlined, LockOutlined } from '@ant-design/icons'
 
+import { updatePassword } from 'firebase/auth'
 import { getMemberById } from '../data/members'
+import { formatAustralianPhone } from '../utils/phone'
 import { useCurrentUser } from '../context/CurrentUserContext'
+import { useAuth } from '../context/AuthContext'
 import MemberAvatar from '../components/MemberAvatar'
 import ActivityLogTimeline from '../components/ActivityLogTimeline'
 
@@ -30,7 +33,8 @@ function sortActivityByNewest<T extends { createdAt?: string }>(items: T[]): T[]
 export default function MemberProfile() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
-  const { isSuperAdmin, currentUserMemberId, isProjectLead } = useCurrentUser()
+  const { isSuperAdmin, isAdmin, currentUserMemberId, isProjectLead } = useCurrentUser()
+  const { currentUser } = useAuth()
   const [member, setMember] = useState<Awaited<ReturnType<typeof getMemberById>>>(null)
   const [loading, setLoading] = useState(!!id)
 
@@ -58,6 +62,10 @@ export default function MemberProfile() {
 
   const isOwnProfile = Boolean(member && currentUserMemberId && member.memberId.toUpperCase() === currentUserMemberId.toUpperCase())
   const showSettingsForLead = isProjectLead && isOwnProfile
+  const targetIsSuperAdmin = member?.roleSystem === 'super_admin'
+  const canSeeActivityLog = isSuperAdmin || isOwnProfile || isAdmin
+  const canSeeSettings = isSuperAdmin || isOwnProfile || (isAdmin && !targetIsSuperAdmin)
+  const adminPasswordOnly = isAdmin && !isOwnProfile
   const fullName = member ? `${member.firstName} ${member.lastName}` : ''
   const [passwordForm] = Form.useForm()
   const [emailForm] = Form.useForm()
@@ -117,7 +125,9 @@ export default function MemberProfile() {
             <Card title="Basic & Contact Details" size="small" style={{ flex: 1, width: '100%' }}>
               <Descriptions column={1} size="small">
                 <Descriptions.Item label={<Space size={6}><MailOutlined />Email</Space>}>{member.email}</Descriptions.Item>
-                <Descriptions.Item label={<Space size={6}><PhoneOutlined />Phone</Space>}>{member.phone}</Descriptions.Item>
+                <Descriptions.Item label={<Space size={6}><PhoneOutlined />Phone</Space>}>
+                  {member.phone ? formatAustralianPhone(member.phone) || member.phone : '—'}
+                </Descriptions.Item>
               </Descriptions>
             </Card>
           </Col>
@@ -125,7 +135,7 @@ export default function MemberProfile() {
             <Card title="Department / Role / Position" size="small" style={{ flex: 1, width: '100%' }}>
               <Descriptions column={1} size="small">
                 <Descriptions.Item label="Department">{member.department}</Descriptions.Item>
-                <Descriptions.Item label="Role">{member.role}</Descriptions.Item>
+                <Descriptions.Item label="Role">{member.role?.trim() || 'Member'}</Descriptions.Item>
                 {member.jobType != null && member.jobType !== '' && (
                   <Descriptions.Item label="Job type">{member.jobType}</Descriptions.Item>
                 )}
@@ -168,7 +178,7 @@ export default function MemberProfile() {
         />
       ),
     },
-    ...((isSuperAdmin || isOwnProfile)
+    ...(canSeeActivityLog
       ? [
           {
             key: 'activity',
@@ -178,15 +188,19 @@ export default function MemberProfile() {
               </span>
             ),
             children: (
-              <Card size="small" title="Recent activity">
+              <Card size="small" title={isOwnProfile ? 'Your activity' : 'Recent activity'}>
                 <ActivityLogTimeline
                   items={activityItems}
-                  description="Recent actions and events for this member."
+                  description={isOwnProfile ? 'Recent actions and events for your account.' : 'Recent actions and events for this member.'}
                   emptyMessage="No activity recorded yet."
                 />
               </Card>
             ),
           },
+        ]
+      : []),
+    ...(canSeeSettings
+      ? [
           {
             key: 'settings',
             label: (
@@ -196,7 +210,7 @@ export default function MemberProfile() {
             ),
             children: (
         <>
-          <Card size="small" title={<Space><LockOutlined /> Change password</Space>} style={{ marginBottom: 16 }}>
+          <Card size="small" title={<Space><LockOutlined /> Change password</Space>} style={{ marginBottom: adminPasswordOnly ? 0 : 16 }}>
             <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>
               Update password for this member. Connect your backend to apply changes.
             </Typography.Text>
@@ -244,6 +258,7 @@ export default function MemberProfile() {
               </Form.Item>
             </Form>
           </Card>
+          {!adminPasswordOnly && (
           <Card size="small" title={<Space><MailOutlined /> Change email</Space>}>
             <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>
               Update email address for this member. Connect your backend to apply changes.
@@ -292,12 +307,13 @@ export default function MemberProfile() {
               </Form.Item>
             </Form>
           </Card>
+          )}
         </>
       ),
     },
         ]
       : []),
-    ...(showSettingsForLead && !isSuperAdmin
+    ...(showSettingsForLead && !isSuperAdmin && !canSeeSettings
       ? [
           {
             key: 'activity',
@@ -308,10 +324,11 @@ export default function MemberProfile() {
             ),
             children: (
               <Card size="small" title="Your activity">
-                <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 12 }}>
-                  Recent actions and events for your account. Connect to your backend to show real data.
-                </Typography.Text>
-                <ActivityLogList entityName={fullName} activities={getMemberActivityPlaceholder(member.memberId)} />
+                <ActivityLogTimeline
+                  items={activityItems}
+                  description="Recent actions and events for your account."
+                  emptyMessage="No activity recorded yet."
+                />
               </Card>
             ),
           },
@@ -330,16 +347,32 @@ export default function MemberProfile() {
                 <Form
                   form={passwordForm}
                   layout="vertical"
-                  onFinish={(values: { newPassword: string; confirmPassword: string }) => {
+                  onFinish={async (values: { newPassword: string; confirmPassword: string }) => {
                     if (values.newPassword !== values.confirmPassword) {
                       message.error('New passwords do not match.')
                       return
                     }
+                    if (!currentUser) {
+                      message.error('You must be signed in to change your password.')
+                      return
+                    }
                     setPasswordLoading(true)
-                    Promise.resolve().then(() => {
-                      message.success('Password change requested. Connect your backend to complete.')
+                    try {
+                      await updatePassword(currentUser, values.newPassword)
+                      message.success('Password updated successfully.')
                       passwordForm.resetFields()
-                    }).finally(() => setPasswordLoading(false))
+                    } catch (err: unknown) {
+                      const msg = err && typeof err === 'object' && 'code' in err
+                        ? (err as { code: string }).code === 'auth/requires-recent-login'
+                          ? 'Please sign out and sign in again, then try changing your password.'
+                        : err && typeof err === 'object' && 'message' in err
+                          ? String((err as { message: string }).message)
+                          : 'Failed to update password'
+                      : 'Failed to update password'
+                      message.error(msg)
+                    } finally {
+                      setPasswordLoading(false)
+                    }
                   }}
                   style={{ maxWidth: 400 }}
                 >
@@ -387,7 +420,7 @@ export default function MemberProfile() {
         >
           Back to Members
         </Button>
-        {isSuperAdmin && (
+        {(isSuperAdmin || isAdmin) && (
           <Button type="primary" icon={<EditOutlined />} onClick={() => navigate(`/members/${id}/edit`)}>
             Edit profile
           </Button>
